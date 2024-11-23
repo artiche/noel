@@ -71,8 +71,8 @@ namespace TirageCadeauNoel
                         {"Maxime","Natacha"},
                         {"Valentine","Bernard"},
                         {"Natacha","Quentin"},
-                        {"Beatrice","Sylvain"},
-                        {"Bernard","Maxime"},
+                        {"Beatrice","Maxime"},
+                        {"Bernard","Sylvain"},
                         {"Quentin","Beatrice"},
                         {"Sylvain","Valentine"},
                     }
