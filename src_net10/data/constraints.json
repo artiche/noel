@@ -1,0 +1,32 @@
+{
+  "users": [
+    "Maxime",
+    "Valentine",
+    "Natacha",
+    "Beatrice",
+    "Bernard",
+    "Quentin",
+    "Sylvain"
+  ],
+  "forbiddenRecipientsByGiver": {
+    "Maxime": [],
+    "Valentine": [
+      "Quentin"
+    ],
+    "Natacha": [
+      "Sylvain"
+    ],
+    "Beatrice": [
+      "Bernard"
+    ],
+    "Bernard": [
+      "Beatrice"
+    ],
+    "Quentin": [
+      "Valentine"
+    ],
+    "Sylvain": [
+      "Natacha"
+    ]
+  }
+}

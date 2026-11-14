@@ -1,0 +1,58 @@
+{
+  "Years": {
+    "2021": {
+      "Maxime": "Beatrice",
+      "Valentine": "Sylvain",
+      "Natacha": "Maxime",
+      "Beatrice": "Valentine",
+      "Bernard": "Natacha",
+      "Quentin": "Bernard",
+      "Sylvain": "Quentin"
+    },
+    "2022": {
+      "Maxime": "Sylvain",
+      "Valentine": "Maxime",
+      "Natacha": "Beatrice",
+      "Beatrice": "Quentin",
+      "Bernard": "Valentine",
+      "Quentin": "Natacha",
+      "Sylvain": "Bernard"
+    },
+    "2023": {
+      "Maxime": "Valentine",
+      "Valentine": "Beatrice",
+      "Natacha": "Bernard",
+      "Beatrice": "Natacha",
+      "Bernard": "Quentin",
+      "Quentin": "Sylvain",
+      "Sylvain": "Maxime"
+    },
+    "2024": {
+      "Maxime": "Natacha",
+      "Valentine": "Bernard",
+      "Natacha": "Quentin",
+      "Beatrice": "Maxime",
+      "Bernard": "Sylvain",
+      "Quentin": "Beatrice",
+      "Sylvain": "Valentine"
+    },
+    "2025": {
+      "Maxime": "Bernard",
+      "Valentine": "Natacha",
+      "Natacha": "Valentine",
+      "Beatrice": "Quentin",
+      "Bernard": "Sylvain",
+      "Quentin": "Maxime",
+      "Sylvain": "Beatrice"
+    },
+    "2026": {
+      "Maxime": "Quentin",
+      "Valentine": "Beatrice",
+      "Natacha": "Bernard",
+      "Beatrice": "Natacha",
+      "Bernard": "Maxime",
+      "Quentin": "Sylvain",
+      "Sylvain": "Valentine"
+    }
+  }
+}
