@@ -1,0 +1,16 @@
+{
+  "name": "artiche/noel-php",
+  "description": "REST API PHP pour le tirage cadeau noel",
+  "type": "project",
+  "require": {
+    "php": "^8.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "Noel\\Api\\": "src/"
+    }
+  },
+  "scripts": {
+    "test": "php tests/run.php"
+  }
+}
