@@ -105,6 +105,43 @@ final class JsonRepository
         return ['years' => $years];
     }
 
+    /** @return array{users: array<int, array{login: string, passwordHash: string}>} */
+    public function loadUsers(string $path): array
+    {
+        $fullPath = $this->resolvePath($path);
+        $data = $this->decodeJsonFile($fullPath);
+
+        $usersRaw = $data['users'] ?? null;
+        if (!is_array($usersRaw)) {
+            throw new ApiException(422, 'invalid_users', "Invalid users structure in {$fullPath}");
+        }
+
+        $users = [];
+        $seenLogins = [];
+        foreach ($usersRaw as $entry) {
+            if (!is_array($entry)) {
+                throw new ApiException(422, 'invalid_users', "Invalid user entry in {$fullPath}");
+            }
+
+            $login = $entry['login'] ?? null;
+            $passwordHash = $entry['passwordHash'] ?? null;
+            if (!is_string($login) || trim($login) === '' || !is_string($passwordHash) || trim($passwordHash) === '') {
+                throw new ApiException(422, 'invalid_users', "User entries must contain non-empty login and passwordHash in {$fullPath}");
+            }
+            if (isset($seenLogins[$login])) {
+                throw new ApiException(422, 'invalid_users', "Duplicate login '{$login}' in {$fullPath}");
+            }
+            $seenLogins[$login] = true;
+
+            $users[] = [
+                'login' => $login,
+                'passwordHash' => $passwordHash,
+            ];
+        }
+
+        return ['users' => $users];
+    }
+
     /** @param array{years: array<int, array<string,string>>} $history */
     public function saveHistory(string $path, array $history): void
     {

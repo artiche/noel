@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Noel\Api\Http;
 
+use Noel\Api\Domain\AuthService;
 use Noel\Api\Domain\DrawService;
 use Noel\Api\Infrastructure\JsonRepository;
 
@@ -11,21 +12,51 @@ final class App
 {
     public function __construct(
         private readonly JsonRepository $jsonRepository,
-        private readonly DrawService $drawService
+        private readonly DrawService $drawService,
+        private readonly AuthService $authService,
+        private readonly string $cookieName,
+        private readonly int $jwtTtlSeconds,
+        private readonly string $cookiePath
     ) {
     }
 
     /**
      * @param array<string, string> $query
      * @param array<string, mixed>|null $jsonBody
-     * @return array{status: int, body: array<string,mixed>}
+     * @param array<string, string> $cookies
+     * @return array{status: int, body: array<string,mixed>, cookies?: array<int, array<string,mixed>>}
      */
-    public function handle(string $method, string $path, array $query, ?array $jsonBody): array
+    public function handle(string $method, string $path, array $query, ?array $jsonBody, array $cookies = []): array
     {
         try {
             if ($method === 'GET' && $path === '/health') {
                 return $this->ok(['status' => 'ok']);
             }
+
+            if ($method === 'POST' && $path === '/login') {
+                if ($jsonBody === null) {
+                    throw new ApiException(400, 'invalid_body', 'JSON body is required');
+                }
+
+                $login = $this->readRequiredString($jsonBody, 'login');
+                $password = $this->readRequiredString($jsonBody, 'password');
+                $usersPath = $this->readUsersPath([], $jsonBody);
+
+                $usersData = $this->jsonRepository->loadUsers($usersPath);
+                $auth = $this->authService->authenticate($login, $password, $usersData, time(), $this->jwtTtlSeconds);
+
+                return $this->okWithCookies(
+                    [
+                        'authenticated' => true,
+                        'expiresAt' => $auth['exp'],
+                    ],
+                    [
+                        $this->buildSessionCookie($auth['token'], $auth['exp']),
+                    ]
+                );
+            }
+
+            $this->assertAuthenticated($cookies);
 
             if ($method === 'GET' && $path === '/possible') {
                 $year = $this->readYearFromQuery($query);
@@ -137,6 +168,52 @@ final class App
         ];
     }
 
+    /**
+     * @param array<int, array<string,mixed>> $cookies
+     * @return array{status:int, body: array<string,mixed>, cookies: array<int, array<string,mixed>>}
+     */
+    private function okWithCookies(array $data, array $cookies): array
+    {
+        $response = $this->ok($data);
+        $response['cookies'] = $cookies;
+        return $response;
+    }
+
+    /** @param array<string, string> $cookies */
+    private function assertAuthenticated(array $cookies): void
+    {
+        $token = $cookies[$this->cookieName] ?? null;
+        if (!is_string($token) || trim($token) === '') {
+            throw new ApiException(401, 'missing_token', 'Missing authentication token');
+        }
+
+        $this->authService->validateSessionToken($token, time());
+    }
+
+    /** @return array<string,mixed> */
+    private function buildSessionCookie(string $token, int $exp): array
+    {
+        return [
+            'name' => $this->cookieName,
+            'value' => $token,
+            'expires' => $exp,
+            'path' => $this->cookiePath,
+            'secure' => true,
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ];
+    }
+
+    /** @param array<string,mixed> $source */
+    private function readRequiredString(array $source, string $key): string
+    {
+        $value = $source[$key] ?? null;
+        if (!is_string($value) || trim($value) === '') {
+            throw new ApiException(400, 'invalid_input', "Field '{$key}' must be a non-empty string");
+        }
+        return $value;
+    }
+
     /** @param array<string,mixed> $source */
     private function readRequiredInt(array $source, string $key): int
     {
@@ -194,6 +271,16 @@ final class App
         }
 
         return [$constraintsPath, $historyPath];
+    }
+
+    /** @param array<string,mixed> $query @param array<string,mixed>|null $body */
+    private function readUsersPath(array $query, ?array $body): string
+    {
+        $usersPath = $query['usersFile'] ?? $body['usersFile'] ?? 'data/users.json';
+        if (!is_string($usersPath) || trim($usersPath) === '') {
+            throw new ApiException(400, 'invalid_input', 'usersFile must be a non-empty string');
+        }
+        return $usersPath;
     }
 
     private function toInt(mixed $value, string $field): int
