@@ -14,6 +14,28 @@ Depuis la racine du repository:
 php -S 127.0.0.1:8080 -t src_php/public
 ```
 
+### Deploiement dans un sous-dossier (`/noel/api`)
+
+Configurer la variable d'environnement `BASE_PATH` avec le prefixe de l'API:
+
+- `BASE_PATH=/noel/api`
+
+Sur un hebergement Apache (ex: IONOS), vous pouvez definir `BASE_PATH` et activer le routage dans le `.htaccess` du dossier web de l'API:
+
+```apache
+SetEnv BASE_PATH /noel/api
+
+RewriteEngine On
+RewriteBase /noel/api/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+```
+
+Avec cette valeur:
+- requete `GET /noel/api/health` route vers l'endpoint `/health`
+- requete `GET /noel/api/draw/2026` route vers `/draw/2026`
+
 ## Endpoints
 
 ### `GET /health`
