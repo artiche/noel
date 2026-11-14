@@ -15,10 +15,14 @@ $service = new DrawService(new EdgeScoreCalculator(), new WeightedBipartiteMatch
 $app = new App($repository, $service);
 
 $rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$basePath = $_SERVER['BASE_PATH'] ?? getenv('BASE_PATH') ?: '';
+$basePath = normalizeBasePath($basePath);
+
 $path = is_string($rawPath) ? rtrim($rawPath, '/') : '/';
 if ($path === '') {
     $path = '/';
 }
+$path = stripBasePath($path, $basePath);
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $query = $_GET;
@@ -36,3 +40,32 @@ $response = $app->handle($method, $path, $query, $jsonBody);
 http_response_code($response['status']);
 header('Content-Type: application/json; charset=utf-8');
 echo json_encode($response['body'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+
+function normalizeBasePath(string $basePath): string
+{
+    $basePath = trim($basePath);
+    if ($basePath === '' || $basePath === '/') {
+        return '';
+    }
+
+    $basePath = '/' . trim($basePath, '/');
+    return rtrim($basePath, '/');
+}
+
+function stripBasePath(string $requestPath, string $basePath): string
+{
+    if ($basePath === '') {
+        return $requestPath;
+    }
+
+    if ($requestPath === $basePath) {
+        return '/';
+    }
+
+    $prefix = $basePath . '/';
+    if (str_starts_with($requestPath, $prefix)) {
+        return '/' . ltrim(substr($requestPath, strlen($basePath)), '/');
+    }
+
+    return $requestPath;
+}
