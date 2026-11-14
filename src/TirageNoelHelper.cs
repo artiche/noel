@@ -89,6 +89,19 @@ namespace TirageCadeauNoel
                         {"Quentin","Maxime"},
                         {"Sylvain","Beatrice"},
                     }
+                },
+                {
+                    2026,
+                    new Dictionary<string, string>
+                    {
+                        {"Maxime","Quentin"},
+                        {"Valentine","Beatrice"},
+                        {"Natacha","Bernard"},
+                        {"Beatrice","Natacha"},
+                        {"Bernard","Maxime"},
+                        {"Quentin","Sylvain"},
+                        {"Sylvain","Valentine"},
+                    }
                 }
             };
 
