@@ -46,6 +46,18 @@ assertEquals(200, $login['status'], 'login endpoint should return 200');
 assertTrue(isset($login['cookies'][0]['value']), 'login should return session cookie');
 $sessionToken = (string) $login['cookies'][0]['value'];
 
+$subpathApp = new App($repo, $service, $authService, 'custom_session', 1800, '/noel/api');
+$logout = $subpathApp->handle('POST', '/logout', [], null, ['custom_session' => $sessionToken]);
+assertEquals(200, $logout['status'], 'logout should return 200');
+assertEquals(false, $logout['body']['data']['authenticated'], 'logout should report logged out');
+assertEquals('custom_session', $logout['cookies'][0]['name'], 'logout should use configured cookie name');
+assertEquals('', $logout['cookies'][0]['value'], 'logout should clear the cookie value');
+assertTrue($logout['cookies'][0]['expires'] < time(), 'logout cookie should expire in the past');
+assertEquals('/noel/api', $logout['cookies'][0]['path'], 'logout should use configured cookie path');
+assertEquals(true, $logout['cookies'][0]['secure'], 'logout cookie should remain secure');
+assertEquals(true, $logout['cookies'][0]['httponly'], 'logout cookie should remain HttpOnly');
+assertEquals('Strict', $logout['cookies'][0]['samesite'], 'logout cookie should remain SameSite Strict');
+
 $possible = $app->handle('GET', '/possible', ['year' => '2027'], null, ['noel_session' => $sessionToken]);
 assertEquals(200, $possible['status'], 'possible endpoint should return 200');
 assertTrue(isset($possible['body']['data']['possibleRecipientsByGiver']['Maxime']), 'possible should include Maxime');

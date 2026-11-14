@@ -1,0 +1,59 @@
+<mat-toolbar>
+  <span>Tirages de Noël</span>
+  <span class="spacer"></span>
+  <button mat-button [matMenuTriggerFor]="yearMenu">Années</button>
+  <mat-menu #yearMenu="matMenu">
+    @for (year of years; track year) {
+      <a mat-menu-item [routerLink]="['/tirages', year]">{{ year }}</a>
+    }
+  </mat-menu>
+  <button mat-button (click)="logout()" [disabled]="logoutBusy()">Déconnexion</button>
+</mat-toolbar>
+
+<main>
+  @if (logoutError()) {
+    <p class="error" role="alert">{{ logoutError() }}</p>
+  }
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      @let current = state();
+      @switch (current.kind) {
+        @case ('loading') {
+          <div class="loading" role="status">
+            <mat-spinner diameter="32" />
+            <span>Chargement du tirage…</span>
+          </div>
+        }
+        @case ('draw') {
+          <h1>Tirage {{ current.draw.year }}</h1>
+          <table mat-table [dataSource]="current.draw.lines">
+            <ng-container matColumnDef="assignment">
+              <th mat-header-cell *matHeaderCellDef>Attributions</th>
+              <td mat-cell *matCellDef="let line">{{ line }}</td>
+            </ng-container>
+            <tr mat-header-row *matHeaderRowDef="columns"></tr>
+            <tr mat-row *matRowDef="let row; columns: columns"></tr>
+          </table>
+        }
+        @case ('empty') {
+          <h1>Tirages</h1>
+          <p role="status">
+            @if (current.year) {
+              Aucun tirage disponible pour {{ current.year }}.
+            } @else {
+              Aucun tirage disponible depuis 2021.
+            }
+          </p>
+        }
+        @case ('invalid') {
+          <h1>Année invalide</h1>
+          <p role="alert">Choisissez une année entre 2021 et l'année en cours dans le menu.</p>
+        }
+        @case ('error') {
+          <h1>Tirages</h1>
+          <p class="error" role="alert">{{ current.message }}</p>
+        }
+      }
+    </mat-card-content>
+  </mat-card>
+</main>

@@ -61,6 +61,12 @@ Reponse:
 - `200` + cookie `noel_session` (`HttpOnly`, `Secure`, `SameSite=Strict`, expiration 30 min)
 - `401` si identifiants invalides
 
+### `POST /logout`
+
+Supprime le cookie de session du navigateur, y compris si la session a expire.
+La reponse contient `data.authenticated: false`. Un JWT copie auparavant reste
+valide jusqu'a son expiration : cet endpoint ne revoque pas les jetons.
+
 ### `GET /possible?year=2027[&seed=42][&historyFile=...][&constraintsFile=...]`
 
 Retourne, pour chaque donneur, la liste des receveurs possibles tries par score.

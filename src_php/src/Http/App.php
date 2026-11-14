@@ -56,6 +56,13 @@ final class App
                 );
             }
 
+            if ($method === 'POST' && $path === '/logout') {
+                return $this->okWithCookies(
+                    ['authenticated' => false],
+                    [$this->buildSessionCookie('', time() - 3600)]
+                );
+            }
+
             $this->assertAuthenticated($cookies);
 
             if ($method === 'GET' && $path === '/possible') {

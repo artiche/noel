@@ -1,0 +1,19 @@
+{
+  "name": "noel-dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "postCreateCommand": "dotnet --version && php --version && node --version && npm --version && ng version",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit",
+        "xdebug.php-pack",
+        "esbenp.prettier-vscode",
+        "Angular.ng-template"
+      ]
+    }
+  }
+}

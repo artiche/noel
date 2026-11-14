@@ -1,0 +1,31 @@
+<main class="login-page">
+  <mat-card appearance="outlined" class="login-card">
+    <mat-card-header>
+      <mat-card-title>Tirages de Noël</mat-card-title>
+      <mat-card-subtitle>Connectez-vous pour consulter les tirages.</mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content>
+      @if (sessionExpired) {
+        <p role="status">Votre session a expiré. Veuillez vous reconnecter.</p>
+      }
+      <form [formGroup]="form" (ngSubmit)="submit()">
+        <mat-form-field appearance="outline">
+          <mat-label>Identifiant</mat-label>
+          <input matInput formControlName="login" autocomplete="username" required>
+          <mat-error>L'identifiant est obligatoire.</mat-error>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Mot de passe</mat-label>
+          <input matInput type="password" formControlName="password" autocomplete="current-password" required>
+          <mat-error>Le mot de passe est obligatoire.</mat-error>
+        </mat-form-field>
+        @if (error()) {
+          <p class="error" role="alert">{{ error() }}</p>
+        }
+        <button mat-flat-button type="submit" [disabled]="busy()">
+          {{ busy() ? 'Connexion…' : 'Se connecter' }}
+        </button>
+      </form>
+    </mat-card-content>
+  </mat-card>
+</main>
