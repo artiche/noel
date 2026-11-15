@@ -10,6 +10,7 @@ final class JwtService
 {
     public function __construct(private readonly string $secret)
     {
+        $this->assertSecretConfigured();
     }
 
     /** @param array<string,mixed> $claims */
@@ -87,8 +88,9 @@ final class JwtService
 
     private function assertSecretConfigured(): void
     {
-        if ($this->secret === '') {
-            throw new ApiException(500, 'jwt_secret_missing', 'JWT secret is not configured');
+        if (strlen(trim($this->secret)) < 32 || str_starts_with(strtoupper(trim($this->secret)), 'CHANGE_ME')
+            || str_starts_with(strtolower(trim($this->secret)), 'change-me')) {
+            throw new ApiException(500, 'jwt_secret_invalid', 'JWT secret must be a non-placeholder value of at least 32 bytes');
         }
     }
 }

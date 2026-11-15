@@ -11,6 +11,11 @@ export interface Draw {
   lines: string[];
 }
 
+export interface Session {
+  authenticated: true;
+  isAdmin: boolean;
+}
+
 interface ApiResponse<T> {
   data: T;
 }
@@ -34,6 +39,23 @@ export class Api {
   logout(): Observable<void> {
     return this.http.post<ApiResponse<{ authenticated: boolean }>>(
       `${this.base}logout`, {}, { withCredentials: true },
+    ).pipe(map(() => undefined));
+  }
+
+  session(): Observable<Session> {
+    return this.http.get<ApiResponse<Session>>(
+      `${this.base}session`, { withCredentials: true },
+    ).pipe(map((response) => {
+      if (response.data?.authenticated !== true || typeof response.data.isAdmin !== 'boolean') {
+        throw new Error('Invalid session response');
+      }
+      return response.data;
+    }));
+  }
+
+  requestPasswordReset(login: string): Observable<void> {
+    return this.http.post<ApiResponse<{ passwordResetRequested: boolean }>>(
+      `${this.base}password/forgot`, { login }, { withCredentials: true },
     ).pipe(map(() => undefined));
   }
 

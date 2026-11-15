@@ -105,7 +105,7 @@ final class JsonRepository
         return ['years' => $years];
     }
 
-    /** @return array{users: array<int, array{login: string, passwordHash: string}>} */
+    /** @return array{users: array<int, array{login: string, passwordHash: string, email: string, isAdmin: bool, sessionVersion: int}>} */
     public function loadUsers(string $path): array
     {
         $fullPath = $this->resolvePath($path);
@@ -125,8 +125,27 @@ final class JsonRepository
 
             $login = $entry['login'] ?? null;
             $passwordHash = $entry['passwordHash'] ?? null;
-            if (!is_string($login) || trim($login) === '' || !is_string($passwordHash) || trim($passwordHash) === '') {
-                throw new ApiException(422, 'invalid_users', "User entries must contain non-empty login and passwordHash in {$fullPath}");
+            $email = $entry['email'] ?? null;
+            $isAdmin = array_key_exists('isAdmin', $entry) ? $entry['isAdmin'] : false;
+            $sessionVersion = array_key_exists('sessionVersion', $entry) ? $entry['sessionVersion'] : 0;
+            if (
+                !is_string($login)
+                || trim($login) === ''
+                || !is_string($passwordHash)
+                || trim($passwordHash) === ''
+                || !is_string($email)
+                || trim($email) === ''
+            ) {
+                throw new ApiException(422, 'invalid_users', "User entries must contain non-empty login, passwordHash and email in {$fullPath}");
+            }
+            if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+                throw new ApiException(422, 'invalid_users', "User '{$login}' has an invalid email in {$fullPath}");
+            }
+            if (!is_bool($isAdmin)) {
+                throw new ApiException(422, 'invalid_users', "User '{$login}' has an invalid isAdmin in {$fullPath}");
+            }
+            if (!is_int($sessionVersion) || $sessionVersion < 0) {
+                throw new ApiException(422, 'invalid_users', "User '{$login}' has an invalid sessionVersion in {$fullPath}");
             }
             if (isset($seenLogins[$login])) {
                 throw new ApiException(422, 'invalid_users', "Duplicate login '{$login}' in {$fullPath}");
@@ -136,34 +155,101 @@ final class JsonRepository
             $users[] = [
                 'login' => $login,
                 'passwordHash' => $passwordHash,
+                'email' => $email,
+                'isAdmin' => $isAdmin,
+                'sessionVersion' => $sessionVersion,
             ];
         }
 
         return ['users' => $users];
     }
 
+    /** @param array{users: array<int, array{login: string, passwordHash: string, email: string, isAdmin: bool, sessionVersion: int}>} $users */
+    public function saveUsers(string $path, array $users): void
+    {
+        $this->saveJson($path, ['users' => $users['users']]);
+    }
+
+    /** @return array{resets: array<int, array{id: string, login: string, newPasswordHash: string, expiresAt: int, usedAt: int|null, sessionVersion: int|null}>} */
+    public function loadPasswordResets(string $path): array
+    {
+        $fullPath = $this->resolvePath($path);
+        if (!is_file($fullPath)) {
+            return ['resets' => []];
+        }
+
+        $data = $this->decodeJsonFile($fullPath);
+        $resetsRaw = $data['resets'] ?? null;
+        if (!is_array($resetsRaw)) {
+            throw new ApiException(422, 'invalid_password_resets', "Invalid password resets structure in {$fullPath}");
+        }
+
+        $resets = [];
+        foreach ($resetsRaw as $entry) {
+            if (!is_array($entry)) {
+                throw new ApiException(422, 'invalid_password_resets', "Invalid reset entry in {$fullPath}");
+            }
+
+            $id = $entry['id'] ?? null;
+            $login = $entry['login'] ?? null;
+            $newPasswordHash = $entry['newPasswordHash'] ?? null;
+            $expiresAt = $entry['expiresAt'] ?? null;
+            $usedAt = $entry['usedAt'] ?? null;
+            $sessionVersion = $entry['sessionVersion'] ?? null;
+
+            if (!is_string($id) || trim($id) === '' || !is_string($login) || trim($login) === '' || !is_string($newPasswordHash) || trim($newPasswordHash) === '') {
+                throw new ApiException(422, 'invalid_password_resets', "Password reset entries must contain non-empty id, login and newPasswordHash in {$fullPath}");
+            }
+            if (!is_int($expiresAt) && !(is_string($expiresAt) && preg_match('/^\d+$/', $expiresAt) === 1)) {
+                throw new ApiException(422, 'invalid_password_resets', "Password reset entry '{$id}' has invalid expiresAt in {$fullPath}");
+            }
+            if ($usedAt !== null && !is_int($usedAt) && !(is_string($usedAt) && preg_match('/^\d+$/', $usedAt) === 1)) {
+                throw new ApiException(422, 'invalid_password_resets', "Password reset entry '{$id}' has invalid usedAt in {$fullPath}");
+            }
+            if ($sessionVersion !== null && (!is_int($sessionVersion) || $sessionVersion < 0)) {
+                throw new ApiException(422, 'invalid_password_resets', "Password reset entry '{$id}' has invalid sessionVersion in {$fullPath}");
+            }
+
+            $resets[] = [
+                'id' => $id,
+                'login' => $login,
+                'newPasswordHash' => $newPasswordHash,
+                'expiresAt' => (int) $expiresAt,
+                'usedAt' => $usedAt === null ? null : (int) $usedAt,
+                'sessionVersion' => $sessionVersion,
+            ];
+        }
+
+        return ['resets' => $resets];
+    }
+
+    /** @param array{resets: array<int, array{id: string, login: string, newPasswordHash: string, expiresAt: int, usedAt: int|null, sessionVersion: int|null}>} $resets */
+    public function savePasswordResets(string $path, array $resets): void
+    {
+        $this->saveJson($path, ['resets' => $resets['resets']]);
+    }
+
+    public function withUserLock(string $usersPath, callable $operation): mixed
+    {
+        $lockPath = $this->resolvePath($usersPath) . '.lock';
+        $lock = fopen($lockPath, 'c');
+        if ($lock === false) {
+            throw new ApiException(500, 'io_error', 'Cannot open user data lock');
+        }
+        try {
+            if (!flock($lock, LOCK_EX)) {
+                throw new ApiException(500, 'io_error', 'Cannot acquire user data lock');
+            }
+            return $operation();
+        } finally {
+            fclose($lock);
+        }
+    }
+
     /** @param array{years: array<int, array<string,string>>} $history */
     public function saveHistory(string $path, array $history): void
     {
-        $fullPath = $this->resolvePath($path);
-        $dir = dirname($fullPath);
-        if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
-            throw new ApiException(500, 'io_error', "Cannot create directory '{$dir}'");
-        }
-
-        $encoded = json_encode(['years' => $history['years']], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-        if ($encoded === false) {
-            throw new ApiException(500, 'serialization_error', 'Failed to encode history JSON');
-        }
-
-        $tmp = $fullPath . '.tmp';
-        if (file_put_contents($tmp, $encoded . PHP_EOL) === false) {
-            throw new ApiException(500, 'io_error', "Failed to write temporary history file '{$tmp}'");
-        }
-        if (!rename($tmp, $fullPath)) {
-            @unlink($tmp);
-            throw new ApiException(500, 'io_error', "Failed to replace history file '{$fullPath}'");
-        }
+        $this->saveJson($path, ['years' => $history['years']]);
     }
 
     private function resolvePath(string $path): string
@@ -193,6 +279,30 @@ final class JsonRepository
         }
 
         return $decoded;
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function saveJson(string $path, array $payload): void
+    {
+        $fullPath = $this->resolvePath($path);
+        $dir = dirname($fullPath);
+        if (!is_dir($dir) && !mkdir($dir, 0777, true) && !is_dir($dir)) {
+            throw new ApiException(500, 'io_error', "Cannot create directory '{$dir}'");
+        }
+
+        $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            throw new ApiException(500, 'serialization_error', 'Failed to encode JSON payload');
+        }
+
+        $tmp = $fullPath . '.tmp';
+        if (file_put_contents($tmp, $encoded . PHP_EOL) === false) {
+            throw new ApiException(500, 'io_error', "Failed to write temporary file '{$tmp}'");
+        }
+        if (!rename($tmp, $fullPath)) {
+            @unlink($tmp);
+            throw new ApiException(500, 'io_error', "Failed to replace file '{$fullPath}'");
+        }
     }
 
     private function isAbsolutePath(string $path): bool

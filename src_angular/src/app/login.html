@@ -1,8 +1,12 @@
 <main class="login-page">
-  <mat-card appearance="outlined" class="login-card">
+  <mat-card appearance="outlined" class="login-card festive-card">
+    <div class="card-ornament" aria-hidden="true">
+      <mat-icon>forest</mat-icon>
+    </div>
+    <p class="eyebrow">Une tradition à partager</p>
     <mat-card-header>
-      <mat-card-title>Tirages de Noël</mat-card-title>
-      <mat-card-subtitle>Connectez-vous pour consulter les tirages.</mat-card-subtitle>
+      <mat-card-title class="display-title">Tirages de Noël</mat-card-title>
+      <mat-card-subtitle>Connectez-vous pour découvrir les cadeaux qui se préparent.</mat-card-subtitle>
     </mat-card-header>
     <mat-card-content>
       @if (sessionExpired) {
@@ -22,10 +26,27 @@
         @if (error()) {
           <p class="error" role="alert">{{ error() }}</p>
         }
+        @if (forgotError()) {
+          <p class="error" role="alert">{{ forgotError() }}</p>
+        }
+        @if (forgotMessage()) {
+          <p class="success" role="status">{{ forgotMessage() }}</p>
+        }
         <button mat-flat-button type="submit" [disabled]="busy()">
+          <mat-icon aria-hidden="true">redeem</mat-icon>
           {{ busy() ? 'Connexion…' : 'Se connecter' }}
+        </button>
+        <button
+          mat-stroked-button
+          type="button"
+          data-testid="forgot-password-button"
+          [disabled]="busy() || forgotBusy()"
+          (click)="requestPasswordReset()">
+          <mat-icon aria-hidden="true">mail</mat-icon>
+          {{ forgotBusy() ? 'Envoi…' : 'Mot de passe oublié ?' }}
         </button>
       </form>
     </mat-card-content>
+    <div class="card-footer" aria-hidden="true"><mat-icon>ac_unit</mat-icon></div>
   </mat-card>
 </main>

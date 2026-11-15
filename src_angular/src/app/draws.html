@@ -1,7 +1,13 @@
 <mat-toolbar>
-  <span>Tirages de Noël</span>
+  <div class="brand">
+    <mat-icon aria-hidden="true">forest</mat-icon>
+    <span class="display-title">Tirages de Noël</span>
+  </div>
   <span class="spacer"></span>
-  <button mat-button [matMenuTriggerFor]="yearMenu">Années</button>
+  <button mat-button [matMenuTriggerFor]="yearMenu">
+    <mat-icon aria-hidden="true">ac_unit</mat-icon>
+    Années
+  </button>
   <mat-menu #yearMenu="matMenu">
     @for (year of years; track year) {
       <a mat-menu-item [routerLink]="['/tirages', year]">{{ year }}</a>
@@ -11,10 +17,15 @@
 </mat-toolbar>
 
 <main>
+  @if (sessionError()) {
+    <p class="error" role="alert">{{ sessionError() }}
+      <button mat-button type="button" (click)="loadSession()">Réessayer</button>
+    </p>
+  }
   @if (logoutError()) {
     <p class="error" role="alert">{{ logoutError() }}</p>
   }
-  <mat-card appearance="outlined">
+  <mat-card appearance="outlined" class="festive-card results-card">
     <mat-card-content>
       @let current = state();
       @switch (current.kind) {
@@ -25,33 +36,50 @@
           </div>
         }
         @case ('draw') {
-          <h1>Tirage {{ current.draw.year }}</h1>
-          <table mat-table [dataSource]="current.draw.lines">
-            <ng-container matColumnDef="assignment">
-              <th mat-header-cell *matHeaderCellDef>Attributions</th>
-              <td mat-cell *matCellDef="let line">{{ line }}</td>
-            </ng-container>
-            <tr mat-header-row *matHeaderRowDef="columns"></tr>
-            <tr mat-row *matRowDef="let row; columns: columns"></tr>
-          </table>
+          <div class="result-heading">
+            <div class="ornament" aria-hidden="true"><mat-icon>redeem</mat-icon></div>
+            <p class="eyebrow"><mat-icon aria-hidden="true">auto_awesome</mat-icon> La magie de Noël</p>
+            <h1>Tirage {{ current.draw.year }}</h1>
+            <p class="intro">Plaisir d'offrir, joie de recevoir.</p>
+          </div>
+          <div class="table-wrap" [@.disabled]="reducedMotion()" @reveal>
+            <table mat-table [dataSource]="current.draw.lines">
+              <ng-container matColumnDef="assignment">
+                <th mat-header-cell *matHeaderCellDef>Attributions</th>
+                <td mat-cell *matCellDef="let line">
+                  <mat-icon aria-hidden="true">redeem</mat-icon>
+                  <span>{{ line }}</span>
+                </td>
+              </ng-container>
+              <tr mat-header-row *matHeaderRowDef="columns"></tr>
+              <tr mat-row *matRowDef="let row; columns: columns"></tr>
+            </table>
+          </div>
         }
         @case ('empty') {
-          <h1>Tirages</h1>
-          <p role="status">
-            @if (current.year) {
-              Aucun tirage disponible pour {{ current.year }}.
-            } @else {
-              Aucun tirage disponible depuis 2021.
-            }
-          </p>
+          <div class="state-message">
+            <div class="ornament" aria-hidden="true"><mat-icon>ac_unit</mat-icon></div>
+            <h1>Tirages</h1>
+            <p role="status">
+              @if (current.year) {
+                Aucun tirage disponible pour {{ current.year }}.
+              } @else {
+                Aucun tirage disponible depuis 2021.
+              }
+            </p>
+          </div>
         }
         @case ('invalid') {
-          <h1>Année invalide</h1>
-          <p role="alert">Choisissez une année entre 2021 et l'année en cours dans le menu.</p>
+          <div class="state-message">
+            <h1>Année invalide</h1>
+            <p role="alert">Choisissez une année entre 2021 et l'année en cours dans le menu.</p>
+          </div>
         }
         @case ('error') {
-          <h1>Tirages</h1>
-          <p class="error" role="alert">{{ current.message }}</p>
+          <div class="state-message">
+            <h1>Tirages</h1>
+            <p class="error" role="alert">{{ current.message }}</p>
+          </div>
         }
       }
     </mat-card-content>

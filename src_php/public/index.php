@@ -6,65 +6,119 @@ use Noel\Api\Domain\DrawService;
 use Noel\Api\Domain\EdgeScoreCalculator;
 use Noel\Api\Domain\AuthService;
 use Noel\Api\Domain\JwtService;
+use Noel\Api\Domain\PasswordResetService;
 use Noel\Api\Domain\WeightedBipartiteMatcher;
 use Noel\Api\Http\App;
 use Noel\Api\Infrastructure\JsonRepository;
+use Noel\Api\Infrastructure\SmtpPasswordResetNotifier;
 
 require_once dirname(__DIR__) . '/src/Bootstrap.php';
-
-$repository = new JsonRepository(dirname(__DIR__, 1));
-$service = new DrawService(new EdgeScoreCalculator(), new WeightedBipartiteMatcher());
-$jwtSecret = $_SERVER['JWT_SECRET'] ?? getenv('JWT_SECRET') ?: '';
-$cookieName = $_SERVER['JWT_COOKIE_NAME'] ?? getenv('JWT_COOKIE_NAME') ?: 'noel_session';
-$ttlRaw = $_SERVER['JWT_TTL_SECONDS'] ?? getenv('JWT_TTL_SECONDS') ?: '1800';
-$jwtTtlSeconds = ctype_digit((string) $ttlRaw) ? (int) $ttlRaw : 1800;
-
-$authService = new AuthService(new JwtService($jwtSecret));
-$app = new App($repository, $service, $authService, $cookieName, $jwtTtlSeconds, '/');
-
-$rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
-$basePath = $_SERVER['BASE_PATH'] ?? getenv('BASE_PATH') ?: '';
-$basePath = normalizeBasePath($basePath);
-
-$path = is_string($rawPath) ? rtrim($rawPath, '/') : '/';
-if ($path === '') {
-    $path = '/';
-}
-$path = stripBasePath($path, $basePath);
-if ($basePath !== '') {
-    $app = new App($repository, $service, $authService, $cookieName, $jwtTtlSeconds, $basePath);
+if (is_file(dirname(__DIR__) . '/vendor/autoload.php')) {
+    require_once dirname(__DIR__) . '/vendor/autoload.php';
 }
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-$query = $_GET;
-$input = file_get_contents('php://input');
-$jsonBody = null;
-if (is_string($input) && $input !== '') {
-    $decoded = json_decode($input, true);
-    if (is_array($decoded)) {
-        $jsonBody = $decoded;
+try {
+    $configPath = dirname(__DIR__) . '/data/config.php';
+    $localConfigPath = dirname(__DIR__) . '/data/config.local.php';
+    $config = loadConfig($configPath, $localConfigPath);
+
+    $repository = new JsonRepository(dirname(__DIR__, 1));
+    $service = new DrawService(new EdgeScoreCalculator(), new WeightedBipartiteMatcher());
+
+    $basePath = normalizeBasePath(readOptionalConfigString($config, 'base_path', ''));
+    $jwtSecret = readRequiredConfigString($config, 'jwt_secret');
+    $cookieName = readRequiredConfigString($config, 'jwt_cookie_name');
+    $jwtTtlSeconds = readRequiredConfigInt($config, 'jwt_ttl_seconds');
+    $passwordResetTtlSeconds = readRequiredConfigInt($config, 'password_reset_ttl_seconds');
+    $loginRedirectUrl = readRequiredConfigString($config, 'login_redirect_url');
+    $smtpHost = readRequiredConfigString($config, 'smtp_host');
+    $smtpPort = readRequiredConfigInt($config, 'smtp_port');
+    $smtpUsername = readRequiredConfigString($config, 'smtp_username');
+    $smtpPassword = readRequiredConfigString($config, 'smtp_password');
+    $smtpFromEmail = readRequiredConfigString($config, 'smtp_from_email');
+    $smtpFromName = readRequiredConfigString($config, 'smtp_from_name');
+    $usersFilePath = readRequiredConfigString($config, 'users_file_path');
+    $passwordResetsFilePath = readRequiredConfigString($config, 'password_resets_file_path');
+    $passwordResetConfirmationBaseUrl = readRequiredConfigString($config, 'password_reset_confirm_base_url');
+
+    $jwtService = new JwtService($jwtSecret);
+    $authService = new AuthService($jwtService);
+    $passwordResetNotifier = new SmtpPasswordResetNotifier(
+        $smtpHost,
+        $smtpPort,
+        $smtpUsername,
+        $smtpPassword,
+        $smtpFromEmail,
+        $smtpFromName
+    );
+    $passwordResetService = new PasswordResetService($jwtService, $passwordResetNotifier, $passwordResetTtlSeconds, $passwordResetConfirmationBaseUrl);
+    $app = new App(
+        $repository,
+        $service,
+        $authService,
+        $passwordResetService,
+        $cookieName,
+        $jwtTtlSeconds,
+        $basePath === '' ? '/' : $basePath,
+        $usersFilePath,
+        $passwordResetsFilePath,
+        $loginRedirectUrl
+    );
+
+    $rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+    $path = is_string($rawPath) ? rtrim($rawPath, '/') : '/';
+    if ($path === '') {
+        $path = '/';
     }
-}
+    $path = stripBasePath($path, $basePath);
 
-$response = $app->handle($method, $path, $query, $jsonBody, $_COOKIE);
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    $query = $_GET;
+    $input = file_get_contents('php://input');
+    $jsonBody = null;
+    if (is_string($input) && $input !== '') {
+        $decoded = json_decode($input, true);
+        if (is_array($decoded)) {
+            $jsonBody = $decoded;
+        }
+    }
 
-foreach ($response['cookies'] ?? [] as $cookie) {
-    setcookie(
-        $cookie['name'],
-        $cookie['value'],
+    $response = $app->handle($method, $path, $query, $jsonBody, $_COOKIE);
+
+    foreach ($response['cookies'] ?? [] as $cookie) {
+        setcookie(
+            $cookie['name'],
+            $cookie['value'],
+            [
+                'expires' => (int) $cookie['expires'],
+                'path' => (string) $cookie['path'],
+                'secure' => (bool) $cookie['secure'],
+                'httponly' => (bool) $cookie['httponly'],
+                'samesite' => (string) $cookie['samesite'],
+            ]
+        );
+    }
+    foreach ($response['headers'] ?? [] as $headerName => $headerValue) {
+        header((string) $headerName . ': ' . (string) $headerValue);
+    }
+
+    http_response_code($response['status']);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($response['body'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+} catch (Throwable $exception) {
+    error_log('[bootstrap_error] ' . $exception->getMessage() . PHP_EOL . $exception->getTraceAsString());
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(
         [
-            'expires' => (int) $cookie['expires'],
-            'path' => (string) $cookie['path'],
-            'secure' => (bool) $cookie['secure'],
-            'httponly' => (bool) $cookie['httponly'],
-            'samesite' => (string) $cookie['samesite'],
-        ]
+            'error' => [
+                'code' => 'bootstrap_error',
+                'message' => $exception->getMessage(),
+            ],
+        ],
+        JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
     );
 }
-
-http_response_code($response['status']);
-header('Content-Type: application/json; charset=utf-8');
-echo json_encode($response['body'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
 
 function normalizeBasePath(string $basePath): string
 {
@@ -93,4 +147,64 @@ function stripBasePath(string $requestPath, string $basePath): string
     }
 
     return $requestPath;
+}
+
+/** @return array<string,mixed> */
+function loadConfig(string $path, string $localPath): array
+{
+    if (!is_file($path)) {
+        throw new RuntimeException("Config file not found: {$path}");
+    }
+
+    $baseConfig = require $path;
+    if (!is_array($baseConfig)) {
+        throw new RuntimeException("Config file must return an array: {$path}");
+    }
+
+    if (!is_file($localPath)) {
+        return $baseConfig;
+    }
+
+    $localConfig = require $localPath;
+    if (!is_array($localConfig)) {
+        throw new RuntimeException("Local config file must return an array: {$localPath}");
+    }
+
+    return array_replace($baseConfig, $localConfig);
+}
+
+/** @param array<string,mixed> $config */
+function readRequiredConfigString(array $config, string $key): string
+{
+    $value = $config[$key] ?? null;
+    if (!is_string($value) || trim($value) === '') {
+        throw new RuntimeException("Missing or invalid config key '{$key}'");
+    }
+    return $value;
+}
+
+/** @param array<string,mixed> $config */
+function readOptionalConfigString(array $config, string $key, string $defaultValue): string
+{
+    $value = $config[$key] ?? null;
+    if ($value === null) {
+        return $defaultValue;
+    }
+    if (!is_string($value)) {
+        throw new RuntimeException("Invalid config key '{$key}': expected string");
+    }
+    return $value;
+}
+
+/** @param array<string,mixed> $config */
+function readRequiredConfigInt(array $config, string $key): int
+{
+    $value = $config[$key] ?? null;
+    if (is_int($value)) {
+        return $value;
+    }
+    if (is_string($value) && ctype_digit($value)) {
+        return (int) $value;
+    }
+    throw new RuntimeException("Missing or invalid config key '{$key}' (expected integer)");
 }

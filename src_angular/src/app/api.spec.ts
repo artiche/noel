@@ -31,6 +31,22 @@ describe('API des tirages', () => {
     request.flush({ data: { authenticated: true } });
   });
 
+  it('demande un reset de mot de passe avec le login', () => {
+    api.requestPasswordReset('alice').subscribe();
+    const request = http.expectOne('/api/password/forgot');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.withCredentials).toBe(true);
+    expect(request.request.body).toEqual({ login: 'alice' });
+    request.flush({ data: { passwordResetRequested: true } });
+  });
+
+  it('refuse une réponse de session sans rôle booléen', () => {
+    let failed = false;
+    api.session().subscribe({ error: () => failed = true });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: 'true' } });
+    expect(failed).toBe(true);
+  });
+
   it('recherche le tirage le plus récent uniquement après un draw_not_found', () => {
     let result: Draw | null | undefined;
     api.latestDraw(2024).subscribe((value) => result = value);

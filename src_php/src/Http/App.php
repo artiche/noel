@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Noel\Api\Http;
 
+use Throwable;
 use Noel\Api\Domain\AuthService;
 use Noel\Api\Domain\DrawService;
+use Noel\Api\Domain\PasswordResetService;
 use Noel\Api\Infrastructure\JsonRepository;
 
 final class App
@@ -14,9 +16,13 @@ final class App
         private readonly JsonRepository $jsonRepository,
         private readonly DrawService $drawService,
         private readonly AuthService $authService,
+        private readonly PasswordResetService $passwordResetService,
         private readonly string $cookieName,
         private readonly int $jwtTtlSeconds,
-        private readonly string $cookiePath
+        private readonly string $cookiePath,
+        private readonly string $usersFilePath = 'data/users.json',
+        private readonly string $passwordResetsFilePath = 'data/passwordResets.json',
+        private readonly string $loginRedirectUrl = '/login'
     ) {
     }
 
@@ -24,7 +30,7 @@ final class App
      * @param array<string, string> $query
      * @param array<string, mixed>|null $jsonBody
      * @param array<string, string> $cookies
-     * @return array{status: int, body: array<string,mixed>, cookies?: array<int, array<string,mixed>>}
+     * @return array{status: int, body: array<string,mixed>, cookies?: array<int, array<string,mixed>>, headers?: array<string,string>}
      */
     public function handle(string $method, string $path, array $query, ?array $jsonBody, array $cookies = []): array
     {
@@ -40,9 +46,9 @@ final class App
 
                 $login = $this->readRequiredString($jsonBody, 'login');
                 $password = $this->readRequiredString($jsonBody, 'password');
-                $usersPath = $this->readUsersPath([], $jsonBody);
+                $this->rejectAuthFilePaths($jsonBody);
 
-                $usersData = $this->jsonRepository->loadUsers($usersPath);
+                $usersData = $this->jsonRepository->loadUsers($this->usersFilePath);
                 $auth = $this->authService->authenticate($login, $password, $usersData, time(), $this->jwtTtlSeconds);
 
                 return $this->okWithCookies(
@@ -63,7 +69,49 @@ final class App
                 );
             }
 
-            $this->assertAuthenticated($cookies);
+            if ($method === 'POST' && $path === '/password/forgot') {
+                if ($jsonBody === null) {
+                    throw new ApiException(400, 'invalid_body', 'JSON body is required');
+                }
+
+                $login = $this->readRequiredString($jsonBody, 'login');
+                $this->rejectAuthFilePaths($jsonBody);
+
+                $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($login): void {
+                    $usersData = $this->jsonRepository->loadUsers($this->usersFilePath);
+                    $resetsData = $this->jsonRepository->loadPasswordResets($this->passwordResetsFilePath);
+                    $updated = $this->passwordResetService->requestReset($login, $usersData, $resetsData, time());
+                    $this->jsonRepository->savePasswordResets($this->passwordResetsFilePath, ['resets' => $updated['resets']]);
+                    $this->passwordResetService->sendNotification($updated['notification']);
+                });
+
+                return $this->ok([
+                    'passwordResetRequested' => true,
+                ]);
+            }
+
+            if ($method === 'GET' && $path === '/password/confirm') {
+                $token = $this->readRequiredString($query, 'token');
+                $this->rejectAuthFilePaths($query);
+
+                $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($token): void {
+                    $usersData = $this->jsonRepository->loadUsers($this->usersFilePath);
+                    $resetsData = $this->jsonRepository->loadPasswordResets($this->passwordResetsFilePath);
+                    $updated = $this->passwordResetService->confirmReset($token, $usersData, $resetsData, time());
+                    $this->jsonRepository->savePasswordResets($this->passwordResetsFilePath, ['resets' => $updated['resets']]);
+                    $this->jsonRepository->saveUsers($this->usersFilePath, ['users' => $updated['users']]);
+                });
+
+                return $this->redirect($this->loginRedirectUrl);
+            }
+
+            $session = $this->assertAuthenticated($cookies);
+
+            if ($method === 'GET' && $path === '/session') {
+                $response = $this->ok(['authenticated' => true, 'isAdmin' => $session['isAdmin']]);
+                $response['headers'] = ['Cache-Control' => 'no-store'];
+                return $response;
+            }
 
             if ($method === 'GET' && $path === '/possible') {
                 $year = $this->readYearFromQuery($query);
@@ -114,6 +162,9 @@ final class App
             }
 
             if ($method === 'POST' && $path === '/draw') {
+                if ($session['isAdmin'] !== true) {
+                    throw new ApiException(403, 'forbidden', 'Administrator access required');
+                }
                 if ($jsonBody === null) {
                     throw new ApiException(400, 'invalid_body', 'JSON body is required');
                 }
@@ -154,12 +205,26 @@ final class App
 
             throw new ApiException(404, 'not_found', 'Route not found');
         } catch (ApiException $ex) {
+            if ($ex->statusCode >= 500 || ($method === 'POST' && $path === '/password/forgot')) {
+                $this->logServerError($method, $path, $ex->errorCode, $ex->getMessage());
+            }
             return [
                 'status' => $ex->statusCode,
                 'body' => [
                     'error' => [
                         'code' => $ex->errorCode,
                         'message' => $ex->getMessage(),
+                    ],
+                ],
+            ];
+        } catch (Throwable $ex) {
+            $this->logServerError($method, $path, 'unhandled_exception', $ex->getMessage(), $ex);
+            return [
+                'status' => 500,
+                'body' => [
+                    'error' => [
+                        'code' => 'internal_error',
+                        'message' => 'Unexpected server error',
                     ],
                 ],
             ];
@@ -175,6 +240,22 @@ final class App
         ];
     }
 
+    /** @return array{status:int, body: array<string,mixed>, headers: array<string,string>} */
+    private function redirect(string $location): array
+    {
+        return [
+            'status' => 302,
+            'headers' => [
+                'Location' => $location,
+            ],
+            'body' => [
+                'data' => [
+                    'redirectTo' => $location,
+                ],
+            ],
+        ];
+    }
+
     /**
      * @param array<int, array<string,mixed>> $cookies
      * @return array{status:int, body: array<string,mixed>, cookies: array<int, array<string,mixed>>}
@@ -186,15 +267,19 @@ final class App
         return $response;
     }
 
-    /** @param array<string, string> $cookies */
-    private function assertAuthenticated(array $cookies): void
+    /** @param array<string, string> $cookies @return array<string,mixed> */
+    private function assertAuthenticated(array $cookies): array
     {
         $token = $cookies[$this->cookieName] ?? null;
         if (!is_string($token) || trim($token) === '') {
             throw new ApiException(401, 'missing_token', 'Missing authentication token');
         }
 
-        $this->authService->validateSessionToken($token, time());
+        return $this->authService->validateSessionToken(
+            $token,
+            time(),
+            $this->jsonRepository->loadUsers($this->usersFilePath)
+        );
     }
 
     /** @return array<string,mixed> */
@@ -270,24 +355,20 @@ final class App
     /** @param array<string,mixed> $query @param array<string,mixed>|null $body */
     private function readDataPaths(array $query, ?array $body): array
     {
-        $constraintsPath = $query['constraintsFile'] ?? $body['constraintsFile'] ?? 'data/constraints.json';
-        $historyPath = $query['historyFile'] ?? $body['historyFile'] ?? 'data/history.json';
-
-        if (!is_string($constraintsPath) || !is_string($historyPath)) {
-            throw new ApiException(400, 'invalid_input', 'constraintsFile and historyFile must be strings');
+        foreach ([$query, $body ?? []] as $source) {
+            if (array_key_exists('constraintsFile', $source) || array_key_exists('historyFile', $source)) {
+                throw new ApiException(400, 'invalid_input', 'Draw data file paths cannot be supplied by clients');
+            }
         }
-
-        return [$constraintsPath, $historyPath];
+        return ['data/constraints.json', 'data/history.json'];
     }
 
-    /** @param array<string,mixed> $query @param array<string,mixed>|null $body */
-    private function readUsersPath(array $query, ?array $body): string
+    /** @param array<string,mixed> $source */
+    private function rejectAuthFilePaths(array $source): void
     {
-        $usersPath = $query['usersFile'] ?? $body['usersFile'] ?? 'data/users.json';
-        if (!is_string($usersPath) || trim($usersPath) === '') {
-            throw new ApiException(400, 'invalid_input', 'usersFile must be a non-empty string');
+        if (array_key_exists('usersFile', $source) || array_key_exists('passwordResetsFile', $source)) {
+            throw new ApiException(400, 'invalid_input', 'Authentication file paths cannot be supplied by clients');
         }
-        return $usersPath;
     }
 
     private function toInt(mixed $value, string $field): int
@@ -305,5 +386,14 @@ final class App
         }
 
         return $intValue;
+    }
+
+    private function logServerError(string $method, string $path, string $errorCode, string $message, ?Throwable $exception = null): void
+    {
+        $logMessage = "[api_error] {$method} {$path} {$errorCode}: {$message}";
+        if ($exception !== null) {
+            $logMessage .= PHP_EOL . $exception->getTraceAsString();
+        }
+        error_log($logMessage);
     }
 }

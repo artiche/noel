@@ -3,9 +3,14 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { routes } from './app.routes';
 import { Draws } from './draws';
 import { sessionInterceptor } from './session.interceptor';
+import { SessionService } from './session';
+
+const confettiMock = vi.hoisted(() => Object.assign(vi.fn(), { reset: vi.fn() }));
+vi.mock('canvas-confetti', () => ({ default: confettiMock }));
 
 describe('Consultation des tirages', () => {
   let http: HttpTestingController;
@@ -13,18 +18,26 @@ describe('Consultation des tirages', () => {
   const currentYear = new Date().getFullYear();
 
   beforeEach(async () => {
+    confettiMock.mockClear();
+    confettiMock.reset.mockClear();
     TestBed.configureTestingModule({
       providers: [
         provideRouter(routes),
         provideHttpClient(withInterceptors([sessionInterceptor])),
         provideHttpClientTesting(),
+        provideNoopAnimations(),
       ],
     });
     http = TestBed.inject(HttpTestingController);
     harness = await RouterTestingHarness.create();
+    TestBed.inject(SessionService).load().subscribe();
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: false } });
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+    vi.unstubAllGlobals();
+  });
 
   it('affiche le tirage le plus récent et ses lignes', async () => {
     await harness.navigateByUrl('/tirages', Draws);
@@ -37,6 +50,7 @@ describe('Consultation des tirages', () => {
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain(`Tirage ${currentYear - 1}`);
     expect(harness.routeNativeElement?.textContent).toContain('Alice offre un cadeau à Bob');
+    expect(confettiMock).toHaveBeenCalledTimes(1);
   });
 
   it('signale une année choisie absente sans chercher une autre année', async () => {
@@ -47,6 +61,7 @@ describe('Consultation des tirages', () => {
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Aucun tirage disponible pour 2021');
     http.expectNone('/api/draw/2020');
+    expect(confettiMock).not.toHaveBeenCalled();
   });
 
   it('propose les années depuis 2021 sans année future', async () => {
@@ -74,6 +89,7 @@ describe('Consultation des tirages', () => {
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Impossible de charger le tirage');
     http.expectNone(`/api/draw/${currentYear - 1}`);
+    expect(confettiMock).not.toHaveBeenCalled();
   });
 
   it('annule la recherche précédente lors du changement d’année', async () => {
@@ -86,6 +102,66 @@ describe('Consultation des tirages', () => {
     });
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Tirage 2021');
+    expect(confettiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('relance les confettis uniquement après le chargement de chaque tirage', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({
+      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+    });
+    expect(confettiMock).toHaveBeenCalledTimes(1);
+    await harness.navigateByUrl('/tirages/2022', Draws);
+    expect(confettiMock).toHaveBeenCalledTimes(1);
+    http.expectOne('/api/draw/2022').flush({
+      data: { year: 2022, assignmentsByGiver: {}, lines: ['Bob offre un cadeau à Alice'] },
+    });
+    expect(confettiMock).toHaveBeenCalledTimes(2);
+    harness.detectChanges();
+    expect(harness.routeNativeElement?.textContent).toContain('Bob offre un cadeau à Alice');
+  });
+
+  it('affiche immédiatement le résultat sans confettis si les animations sont réduites', async () => {
+    const preference = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('matchMedia', vi.fn(() => preference));
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({
+      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+    });
+    harness.detectChanges();
+    expect(harness.routeNativeElement?.textContent).toContain('Alice offre un cadeau à Bob');
+    expect(confettiMock).not.toHaveBeenCalled();
+  });
+
+  it('arrête les confettis si la préférence change et retire son écouteur en quittant la page', async () => {
+    let changeHandler: ((event: MediaQueryListEvent) => void) | undefined;
+    const preference = {
+      matches: false,
+      addEventListener: vi.fn((_name: string, handler: (event: MediaQueryListEvent) => void) => {
+        changeHandler = handler;
+      }),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('matchMedia', vi.fn(() => preference));
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({
+      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+    });
+    expect(confettiMock).toHaveBeenCalledTimes(1);
+    confettiMock.reset.mockClear();
+    changeHandler?.({ matches: true } as MediaQueryListEvent);
+    expect(confettiMock.reset).toHaveBeenCalledTimes(1);
+    await harness.navigateByUrl('/tirages/2022', Draws);
+    http.expectOne('/api/draw/2022').flush({
+      data: { year: 2022, assignmentsByGiver: {}, lines: ['Bob offre un cadeau à Alice'] },
+    });
+    expect(confettiMock).toHaveBeenCalledTimes(1);
+    await harness.navigateByUrl('/connexion');
+    expect(preference.removeEventListener).toHaveBeenCalledWith('change', changeHandler);
   });
 
   it.each(['/tirages/2020', `/tirages/${currentYear + 1}`, '/tirages/abc'])(

@@ -3,7 +3,8 @@
   "description": "REST API PHP pour le tirage cadeau noel",
   "type": "project",
   "require": {
-    "php": "^8.2"
+    "php": "^8.2",
+    "phpmailer/phpmailer": "^6.9"
   },
   "autoload": {
     "psr-4": {
