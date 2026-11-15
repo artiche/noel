@@ -85,7 +85,7 @@ assertEquals(true, $claims['isAdmin'], 'admin JWT should contain a boolean isAdm
 assertTrue(!array_key_exists('email', $claims), 'JWT should not contain email');
 
 $session = $app->handle('GET', '/session', [], null, ['noel_session' => $sessionToken]);
-assertEquals(['authenticated' => true, 'isAdmin' => true], $session['body']['data'], 'session should expose admin role only');
+assertEquals(['authenticated' => true, 'isAdmin' => true, 'login' => 'admin', 'email' => 'admin@example.com', 'participant' => null, 'participantKey' => null], $session['body']['data'], 'session should expose account and optional participant');
 assertEquals('no-store', $session['headers']['Cache-Control'], 'session response should not be cached');
 assertEquals(200, $app->handle('POST', '/draw', [], ['year' => 2027], ['noel_session' => $sessionToken])['status'], 'admin should be allowed to create a draw');
 assertEquals(401, $app->handle('POST', '/draw', [], ['year' => 2027], [])['status'], 'draw requires a session');
@@ -291,8 +291,69 @@ foreach ([null, 'false', 0] as $invalidRole) {
     assertEquals(422, $invalidLogin['status'], 'non-boolean role must be rejected');
 }
 
+$participantUser = [
+    'login' => "Béatrice",
+    'passwordHash' => password_hash('old-password', PASSWORD_DEFAULT),
+    'email' => 'old@example.com',
+    'isAdmin' => false,
+];
+file_put_contents($tempUsersFile, json_encode(['users' => [$participantUser]]));
+$participantLogin = $testApp->handle('POST', '/login', [], ['login' => "BE\u{0301}ATRICE", 'password' => 'old-password'], []);
+assertEquals(200, $participantLogin['status'], 'Unicode case and accents should not affect login');
+$participantCookie = ['noel_session' => $participantLogin['cookies'][0]['value']];
+assertEquals('Béatrice', $jwtService->verifyToken($participantCookie['noel_session'], time())['sub'], 'JWT uses canonical login');
+assertEquals('Beatrice', $testApp->handle('GET', '/session', [], null, $participantCookie)['body']['data']['participant'], 'participant should match canonical draw spelling');
+assertEquals('beatrice', $testApp->handle('GET', '/session', [], null, $participantCookie)['body']['data']['participantKey'], 'participant key ignores accents and case');
+assertEquals(200, $testApp->handle('POST', '/password/forgot', [], ['login' => 'beatrice'], [])['status'], 'reset finds normalized login');
+$resetMail = end($passwordResetNotifier->sentEmails);
+parse_str((string) parse_url($resetMail['confirmationUrl'], PHP_URL_QUERY), $accountResetParams);
+assertEquals('Béatrice', $resetMail['login'], 'reset uses canonical login');
+assertEquals(401, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'email' => 'new@example.com'], [])['status'], 'account update requires authentication');
+assertEquals(403, $testApp->handle('POST', '/account', [], ['currentPassword' => 'wrong', 'email' => 'new@example.com'], $participantCookie)['status'], 'wrong password must be rejected');
+assertEquals('old@example.com', $repo->loadUsers($tempUsersFile)['users'][0]['email'], 'failed update must not change user');
+assertEquals(400, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'email' => 'invalid'], $participantCookie)['status'], 'invalid email must be rejected');
+assertEquals(400, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password'], $participantCookie)['status'], 'empty update must be rejected');
+assertEquals(400, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'newPassword' => str_repeat('a', 73)], $participantCookie)['status'], 'oversized password must be rejected');
+assertEquals(400, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'newPassword' => "abc\0def"], $participantCookie)['status'], 'NUL password must be rejected');
+assertEquals(200, $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'email' => 'new@example.com'], $participantCookie)['status'], 'email update succeeds');
+assertEquals('new@example.com', $testApp->handle('GET', '/session', [], null, $participantCookie)['body']['data']['email'], 'email update keeps session and updates email');
+assertEquals(409, $testApp->handle('GET', '/password/confirm', ['token' => $accountResetParams['token']], null, [])['status'], 'email update invalidates old reset');
+assertEquals(200, $testApp->handle('POST', '/password/forgot', [], ['login' => 'beatrice'], [])['status'], 'new reset can be requested');
+$resetMail = end($passwordResetNotifier->sentEmails);
+parse_str((string) parse_url($resetMail['confirmationUrl'], PHP_URL_QUERY), $accountResetParams);
+$update = $testApp->handle('POST', '/account', [], ['currentPassword' => 'old-password', 'email' => 'final@example.com', 'newPassword' => 'new-password'], $participantCookie);
+assertEquals(200, $update['status'], 'combined update succeeds');
+assertEquals(401, $testApp->handle('GET', '/session', [], null, $participantCookie)['status'], 'old session is revoked');
+$renewedCookie = ['noel_session' => $update['cookies'][0]['value']];
+assertEquals('final@example.com', $testApp->handle('GET', '/session', [], null, $renewedCookie)['body']['data']['email'], 'renewed session remains usable');
+assertTrue($testApp->handle('GET', '/password/confirm', ['token' => $accountResetParams['token']], null, [])['status'] !== 302, 'old reset cannot override account change');
+assertEquals(401, $testApp->handle('POST', '/login', [], ['login' => 'beatrice', 'password' => 'old-password'], [])['status'], 'old password is invalid');
+assertEquals(200, $testApp->handle('POST', '/login', [], ['login' => 'beatrice', 'password' => 'new-password'], [])['status'], 'new password works');
+assertEquals(200, $testApp->handle('POST', '/password/forgot', [], ['login' => 'beatrice'], [])['status'], 'reset before password-only change should work');
+$resetMail = end($passwordResetNotifier->sentEmails);
+parse_str((string) parse_url($resetMail['confirmationUrl'], PHP_URL_QUERY), $accountResetParams);
+$passwordOnly = $testApp->handle('POST', '/account', [], ['currentPassword' => 'new-password', 'newPassword' => 'another-password'], $renewedCookie);
+assertEquals(200, $passwordOnly['status'], 'password-only update succeeds');
+assertEquals(401, $testApp->handle('GET', '/session', [], null, $renewedCookie)['status'], 'password-only update revokes old session');
+assertEquals(401, $testApp->handle('GET', '/password/confirm', ['token' => $accountResetParams['token']], null, [])['status'], 'password-only update revokes reset');
+assertEquals(200, $testApp->handle('GET', '/session', [], null, ['noel_session' => $passwordOnly['cookies'][0]['value']])['status'], 'password-only update renews current session');
+file_put_contents($tempUsersFile, json_encode(['users' => [$participantUser, array_merge($participantUser, ['login' => 'beatrice'])]]));
+assertEquals(422, $testApp->handle('POST', '/login', [], ['login' => 'beatrice', 'password' => 'old-password'], [])['status'], 'normalized duplicate logins are rejected');
+$tempConstraintsFile = $tempUsersFile . '.constraints';
+file_put_contents($tempConstraintsFile, json_encode(['users' => ['Beatrice', 'Béatrice'], 'forbiddenRecipientsByGiver' => []]));
+try {
+    $repo->loadConstraints($tempConstraintsFile);
+    throw new RuntimeException('Ambiguous participant names were accepted');
+} catch (ApiException $exception) {
+    assertEquals('invalid_constraints', $exception->errorCode, 'normalized duplicate participants are rejected');
+}
+unlink($tempConstraintsFile);
+
 @unlink($tempUsersFile);
 @unlink($tempResetsFile);
 @unlink($tempUsersFile . '.lock');
+
+require __DIR__ . '/admin.php';
+require __DIR__ . '/wishlist.php';
 
 echo "All src_php tests passed.\n";

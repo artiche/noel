@@ -12,7 +12,15 @@ export const sessionInterceptor: HttpInterceptorFn = (request, next) => {
       if (error instanceof HttpErrorResponse && error.status === 401) {
         session.clear();
         if (!request.url.endsWith('/login')) {
-          void router.navigate(['/connexion'], { queryParams: { session: 'expiree' } });
+          const current = router.getCurrentNavigation()?.finalUrl ?? router.parseUrl(router.url);
+          const segments = current.root.children['primary']?.segments ?? [];
+          const wishlist = segments.length === 1 && segments[0].path === 'wishlist';
+          const target = current.queryParams['target'];
+          void router.navigate(['/connexion'], { queryParams: {
+            session: 'expiree',
+            ...(wishlist ? { returnWishlist: '1' } : {}),
+            ...(wishlist && typeof target === 'string' ? { target } : {}),
+          } });
         }
       }
       return throwError(() => error);

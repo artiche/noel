@@ -384,6 +384,11 @@ FodyWeavers.xsd
 !.vscode/extensions.json
 *.code-workspace
 
+# PHP API local secrets
+src_php/data/config.local.php
+src_php/data/wishlists/
+src_php/vendor
+
 # Local History for Visual Studio Code
 .history/
 

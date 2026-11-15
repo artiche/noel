@@ -1,0 +1,148 @@
+<mat-toolbar>
+  <span>Administration</span>
+  <span class="spacer"></span>
+  <a mat-button routerLink="/tirages">Retour aux tirages</a>
+</mat-toolbar>
+
+<main>
+  @if (loading()) {
+    <p role="status">Chargement…</p>
+  }
+  @if (error()) {
+    <p class="error" role="alert">{{ error() }}</p>
+  }
+  @if (message()) {
+    <p role="status">{{ message() }}</p>
+  }
+  @if (!loading() && user() && !user()?.isAdmin) {
+    <p role="alert">Cette page est réservée aux administrateurs.</p>
+  }
+  @if (user()?.isAdmin && data(); as current) {
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <div class="section-heading">
+          <h1>Comptes applicatifs</h1>
+          <button mat-flat-button type="button" [disabled]="busy()" (click)="newAccount()">Créer un compte</button>
+        </div>
+        @if (current.users.length === 0) {
+          <p>Aucun compte.</p>
+        }
+        @for (account of current.users; track account.login) {
+          <div class="entry">
+            <div><strong>{{ account.login }}</strong> · {{ account.email }}
+              @if (account.isAdmin) { <span> · Administrateur</span> }
+            </div>
+            <div class="actions">
+              <button mat-button type="button" [disabled]="busy()" (click)="editAccount(account)">Modifier</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="sendReset(account.login)">Envoyer un reset</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="confirmDelete({ login: account.login })">Supprimer le compte</button>
+            </div>
+          </div>
+        }
+        @if (accountMode()) {
+          <form [formGroup]="accountForm" (ngSubmit)="saveAccount()">
+            <h2>{{ accountMode() === 'create' ? 'Créer un compte' : 'Modifier le compte' }}</h2>
+            @if (linkedParticipant(); as linked) {
+              <p>Participant : {{ linked }}. L’identifiant doit correspondre à ce nom, sans tenir compte de la casse ni des accents.</p>
+            }
+            <mat-form-field appearance="outline">
+              <mat-label>Identifiant</mat-label>
+              <input matInput formControlName="login" [readonly]="accountMode() === 'edit'" required autocomplete="off">
+              <mat-error>L’identifiant est obligatoire.</mat-error>
+            </mat-form-field>
+            <mat-form-field appearance="outline">
+              <mat-label>Email</mat-label>
+              <input matInput type="email" formControlName="email" required autocomplete="off">
+              <mat-error>Renseignez un email valide.</mat-error>
+            </mat-form-field>
+            <mat-checkbox formControlName="isAdmin">Administrateur</mat-checkbox>
+            @if (accountMode() === 'edit') {
+              <mat-form-field appearance="outline">
+                <mat-label>Nouveau mot de passe (facultatif)</mat-label>
+                <input matInput type="password" formControlName="password" autocomplete="new-password">
+              </mat-form-field>
+            } @else {
+              <p>Un mot de passe aléatoire non communiqué est généré. L’utilisateur peut obtenir un mot de passe par réinitialisation.</p>
+              <mat-checkbox formControlName="sendReset">Envoyer un email de réinitialisation après création</mat-checkbox>
+            }
+            <div class="actions">
+              <button mat-flat-button type="submit" [disabled]="busy()">Enregistrer</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="accountMode.set(null)">Annuler</button>
+            </div>
+          </form>
+        }
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <div class="section-heading">
+          <h1>Participants au tirage</h1>
+          <button mat-flat-button type="button" [disabled]="busy()" (click)="newParticipant()">Créer un participant</button>
+        </div>
+        @if (current.participants.length === 0) {
+          <p>Aucun participant. Aucun nouveau tirage ne peut être calculé.</p>
+        }
+        @for (participant of current.participants; track participant.name) {
+          <div class="entry">
+            <div><strong>{{ participant.name }}</strong>
+              @if (participant.login) { <span> · Compte : {{ participant.login }}</span> }
+              @else { <span> · Sans compte</span> }
+              <div>Destinataires interdits : {{ participant.forbiddenRecipients.join(', ') || 'aucun' }}</div>
+            </div>
+            <div class="actions">
+              <button mat-button type="button" [disabled]="busy()" (click)="editParticipant(participant)">Modifier</button>
+              @if (!participant.login) {
+                <button mat-button type="button" [disabled]="busy()" (click)="newAccount(participant)">Créer son compte</button>
+              }
+              <button mat-button type="button" [disabled]="busy()" (click)="confirmDelete({ name: participant.name })">Supprimer le participant</button>
+              @if (participant.login; as login) {
+                <button mat-button type="button" [disabled]="busy()" (click)="confirmDelete({ name: participant.name, login: login })">Supprimer les deux</button>
+              }
+            </div>
+          </div>
+        }
+        @if (participantFormOpen()) {
+          <form [formGroup]="participantForm" (ngSubmit)="saveParticipant()">
+            <h2>{{ editingParticipant() === null ? 'Créer un participant' : 'Modifier le participant' }}</h2>
+            <mat-form-field appearance="outline">
+              <mat-label>Nom</mat-label>
+              <input matInput formControlName="name" required>
+              <mat-error>Le nom est obligatoire.</mat-error>
+            </mat-form-field>
+            @if (editingParticipant(); as editing) {
+              <p>Le nom ne peut être modifié qu’à la casse et aux accents près.</p>
+              <fieldset>
+                <legend>Destinataires interdits</legend>
+                @for (other of current.participants; track other.name) {
+                  @if (other.name !== editing) {
+                    <mat-checkbox [checked]="selectedRecipients().includes(other.name)"
+                      (change)="toggleRecipient(other.name, $event.checked)">{{ other.name }}</mat-checkbox>
+                  }
+                }
+              </fieldset>
+            }
+            <div class="actions">
+              <button mat-flat-button type="submit" [disabled]="busy()">Enregistrer</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="participantFormOpen.set(false)">Annuler</button>
+            </div>
+          </form>
+        }
+      </mat-card-content>
+    </mat-card>
+  }
+  @if (deleteChoice(); as choice) {
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <h2>Confirmer la suppression</h2>
+        @if (choice.login) { <p>Compte : {{ choice.login }}</p> }
+        @if (choice.name) { <p>Participant : {{ choice.name }}</p> }
+        <p>Les tirages enregistrés ne seront pas modifiés.</p>
+        <div class="actions">
+          <button mat-flat-button type="button" [disabled]="busy()" (click)="deleteSelected()">Confirmer</button>
+          <button mat-button type="button" [disabled]="busy()" (click)="deleteChoice.set(null)">Annuler</button>
+        </div>
+      </mat-card-content>
+    </mat-card>
+  }
+</main>

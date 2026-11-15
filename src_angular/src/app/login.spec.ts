@@ -45,6 +45,14 @@ describe('Connexion et déconnexion', () => {
     harness.detectChanges();
   }
 
+  function userMenuAction(label: string): HTMLButtonElement {
+    const trigger = harness.routeNativeElement!.querySelector<HTMLButtonElement>('[aria-label="Menu utilisateur"]')!;
+    trigger.click();
+    harness.detectChanges();
+    return Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
+      .find((button) => button.textContent?.includes(label))!;
+  }
+
   it('affiche une erreur sur des identifiants invalides sans redirection', async () => {
     await submitLogin();
     http.expectOne('/api/login').flush(
@@ -68,14 +76,13 @@ describe('Connexion et déconnexion', () => {
   it('se connecte puis se déconnecte via l’API', async () => {
     await submitLogin();
     http.expectOne('/api/login').flush({ data: { authenticated: true } });
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true } });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     await harness.fixture.whenStable();
     http.expectOne(`/api/draw/${new Date().getFullYear()}`).flush({
-      data: { year: new Date().getFullYear(), assignmentsByGiver: {}, lines: [] },
+      data: { year: new Date().getFullYear(), assignmentsByGiver: {}, lines: [], assignments: [] },
     });
     harness.detectChanges();
-    const button = Array.from(harness.routeNativeElement!.querySelectorAll('button'))
-      .find((element) => element.textContent?.includes('Déconnexion'))!;
+    const button = userMenuAction('Déconnecter');
     button.click();
     const request = http.expectOne('/api/logout');
     expect(request.request.method).toBe('POST');
@@ -115,13 +122,12 @@ describe('Connexion et déconnexion', () => {
 
   it('reste sur la page en cas d’échec de déconnexion', async () => {
     await harness.navigateByUrl('/tirages/2021');
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: false } });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: [] },
+      data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] },
     });
     harness.detectChanges();
-    const button = Array.from(harness.routeNativeElement!.querySelectorAll('button'))
-      .find((element) => element.textContent?.includes('Déconnexion'))!;
+    const button = userMenuAction('Déconnecter');
     button.click();
     http.expectOne('/api/logout').flush(
       { error: { code: 'internal_error' } }, { status: 500, statusText: 'Error' },
@@ -137,38 +143,38 @@ describe('Connexion et déconnexion', () => {
     http.expectOne('/api/login').flush({ data: { authenticated: true } });
     const request = http.expectOne('/api/session');
     expect(request.request.withCredentials).toBe(true);
-    request.flush({ data: { authenticated: true, isAdmin } });
+    request.flush({ data: { authenticated: true, isAdmin, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     await harness.fixture.whenStable();
-    expect(TestBed.inject(SessionService).session()).toEqual({ authenticated: true, isAdmin });
+    expect(TestBed.inject(SessionService).session()).toEqual({ authenticated: true, isAdmin, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null });
     http.expectOne(`/api/draw/${new Date().getFullYear()}`).flush({
-      data: { year: new Date().getFullYear(), assignmentsByGiver: {}, lines: [] },
+      data: { year: new Date().getFullYear(), assignmentsByGiver: {}, lines: [], assignments: [] },
     });
   });
 
   it.each([true, false])('restaure le rôle %s à l’ouverture directe', async (isAdmin) => {
     await harness.navigateByUrl('/tirages/2021');
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin } });
-    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [] } });
-    expect(TestBed.inject(SessionService).session()).toEqual({ authenticated: true, isAdmin });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    expect(TestBed.inject(SessionService).session()).toEqual({ authenticated: true, isAdmin, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null });
   });
 
   it('signale une erreur de chargement de session et permet de réessayer', async () => {
     await harness.navigateByUrl('/tirages/2021');
     http.expectOne('/api/session').flush({}, { status: 500, statusText: 'Error' });
-    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [] } });
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Impossible de charger la session');
     expect(TestBed.inject(SessionService).session()).toBeNull();
     const retry = Array.from(harness.routeNativeElement!.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('Réessayer'))!;
     retry.click();
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true } });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     expect(TestBed.inject(SessionService).session()?.isAdmin).toBe(true);
   });
 
   it('efface la session et redirige à son expiration', async () => {
     await harness.navigateByUrl('/tirages/2021');
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true } });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: true, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     http.expectOne('/api/draw/2021').flush(
       { error: { code: 'token_expired' } }, { status: 401, statusText: 'Unauthorized' },
     );
@@ -182,7 +188,7 @@ describe('Connexion et déconnexion', () => {
     session.load().subscribe();
     const pending = http.expectOne('/api/session');
     session.clear();
-    pending.flush({ data: { authenticated: true, isAdmin: true } });
+    pending.flush({ data: { authenticated: true, isAdmin: true, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
     expect(session.session()).toBeNull();
   });
 });

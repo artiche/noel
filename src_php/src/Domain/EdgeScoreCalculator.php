@@ -14,20 +14,25 @@ final class EdgeScoreCalculator
     public function computeScore(int $targetYear, string $giver, string $recipient, array $history, ?int $seed): int
     {
         $seenYears = [];
+        $giverId = Identity::normalize($giver);
+        $recipientId = Identity::normalize($recipient);
         foreach ($history['years'] as $year => $recipientToGiver) {
             if ($year >= $targetYear) {
                 continue;
             }
 
-            $assignedGiver = $recipientToGiver[$recipient] ?? null;
-            if ($assignedGiver === $giver) {
-                $seenYears[] = $year;
+            foreach ($recipientToGiver as $historicalRecipient => $historicalGiver) {
+                if (Identity::normalize((string) $historicalRecipient) === $recipientId
+                    && Identity::normalize($historicalGiver) === $giverId) {
+                    $seenYears[] = $year;
+                    break;
+                }
             }
         }
 
         $neverSeen = count($seenYears) === 0;
         $age = $neverSeen ? $targetYear : ($targetYear - max($seenYears));
-        $tieBreak = $this->buildDeterministicTieBreak($seed ?? 0, $giver, $recipient);
+        $tieBreak = $this->buildDeterministicTieBreak($seed ?? 0, $giverId, $recipientId);
 
         return ($neverSeen ? self::NEVER_SEEN_BONUS : 0)
             + ($age * self::AGE_MULTIPLIER)

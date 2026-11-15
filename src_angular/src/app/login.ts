@@ -50,7 +50,12 @@ export class Login {
     ).subscribe({
       next: () => {
         this.form.controls.password.reset();
-        void this.router.navigate(['/tirages']);
+        if (this.route.snapshot.queryParamMap.get('returnWishlist') === '1') {
+          const target = this.route.snapshot.queryParamMap.get('target');
+          void this.router.navigate(['/wishlist'], { queryParams: target === null ? {} : { target } });
+        } else {
+          void this.router.navigate(['/tirages']);
+        }
       },
       error: (error: unknown) => {
         this.busy.set(false);

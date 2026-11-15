@@ -28,7 +28,7 @@ final class PasswordResetService
     {
         $userIndex = null;
         foreach ($usersData['users'] as $index => $user) {
-            if ($user['login'] === $login) {
+            if (Identity::normalize($user['login']) === Identity::normalize($login)) {
                 $userIndex = $index;
                 break;
             }
@@ -38,6 +38,7 @@ final class PasswordResetService
             throw new ApiException(404, 'user_not_found', 'Unknown login');
         }
 
+        $login = $usersData['users'][$userIndex]['login'];
         $email = $usersData['users'][$userIndex]['email'];
         if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
             throw new ApiException(422, 'invalid_user_email', 'User email is invalid');
@@ -65,7 +66,7 @@ final class PasswordResetService
             }
         }
         unset($reset);
-        $resetsData['resets'][] = [
+        $reset = [
             'id' => $tokenId,
             'login' => $login,
             'newPasswordHash' => $newPasswordHash,
@@ -73,6 +74,10 @@ final class PasswordResetService
             'usedAt' => null,
             'sessionVersion' => $usersData['users'][$userIndex]['sessionVersion'],
         ];
+        if (isset($usersData['users'][$userIndex]['accountId'])) {
+            $reset['accountId'] = $usersData['users'][$userIndex]['accountId'];
+        }
+        $resetsData['resets'][] = $reset;
 
         return [
             'resets' => $resetsData['resets'],
@@ -153,7 +158,8 @@ final class PasswordResetService
         }
 
         if ($resetEntry['sessionVersion'] === null
-            || $resetEntry['sessionVersion'] !== $usersData['users'][$userIndex]['sessionVersion']) {
+            || $resetEntry['sessionVersion'] !== $usersData['users'][$userIndex]['sessionVersion']
+            || ($resetEntry['accountId'] ?? null) !== ($usersData['users'][$userIndex]['accountId'] ?? null)) {
             throw new ApiException(401, 'invalid_token', 'Password reset token has been revoked');
         }
         if ($usersData['users'][$userIndex]['sessionVersion'] === PHP_INT_MAX) {

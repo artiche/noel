@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Noel\Api\Infrastructure;
 
 use Noel\Api\Http\ApiException;
+use Noel\Api\Domain\Identity;
 
 final class JsonRepository
 {
@@ -25,11 +26,16 @@ final class JsonRepository
         }
 
         $users = array_values(array_map(static fn ($u) => (string) $u, $users));
-        if (count($users) === 0) {
-            throw new ApiException(422, 'invalid_constraints', "No users found in {$fullPath}");
-        }
         if (count($users) !== count(array_unique($users))) {
             throw new ApiException(422, 'invalid_constraints', "Duplicate users found in {$fullPath}");
+        }
+        $seenIdentities = [];
+        foreach ($users as $user) {
+            $identity = Identity::normalize($user);
+            if (isset($seenIdentities[$identity])) {
+                throw new ApiException(422, 'invalid_constraints', "Ambiguous participant names in {$fullPath}");
+            }
+            $seenIdentities[$identity] = true;
         }
 
         $knownUsers = array_fill_keys($users, true);
@@ -128,6 +134,7 @@ final class JsonRepository
             $email = $entry['email'] ?? null;
             $isAdmin = array_key_exists('isAdmin', $entry) ? $entry['isAdmin'] : false;
             $sessionVersion = array_key_exists('sessionVersion', $entry) ? $entry['sessionVersion'] : 0;
+            $accountId = $entry['accountId'] ?? null;
             if (
                 !is_string($login)
                 || trim($login) === ''
@@ -147,18 +154,26 @@ final class JsonRepository
             if (!is_int($sessionVersion) || $sessionVersion < 0) {
                 throw new ApiException(422, 'invalid_users', "User '{$login}' has an invalid sessionVersion in {$fullPath}");
             }
-            if (isset($seenLogins[$login])) {
+            if ($accountId !== null && (!is_string($accountId) || preg_match('/^[a-f0-9]{32}$/', $accountId) !== 1)) {
+                throw new ApiException(422, 'invalid_users', "User '{$login}' has an invalid accountId in {$fullPath}");
+            }
+            $identity = Identity::normalize($login);
+            if (isset($seenLogins[$identity])) {
                 throw new ApiException(422, 'invalid_users', "Duplicate login '{$login}' in {$fullPath}");
             }
-            $seenLogins[$login] = true;
+            $seenLogins[$identity] = true;
 
-            $users[] = [
+            $user = [
                 'login' => $login,
                 'passwordHash' => $passwordHash,
                 'email' => $email,
                 'isAdmin' => $isAdmin,
                 'sessionVersion' => $sessionVersion,
             ];
+            if ($accountId !== null) {
+                $user['accountId'] = $accountId;
+            }
+            $users[] = $user;
         }
 
         return ['users' => $users];
@@ -196,6 +211,7 @@ final class JsonRepository
             $expiresAt = $entry['expiresAt'] ?? null;
             $usedAt = $entry['usedAt'] ?? null;
             $sessionVersion = $entry['sessionVersion'] ?? null;
+            $accountId = $entry['accountId'] ?? null;
 
             if (!is_string($id) || trim($id) === '' || !is_string($login) || trim($login) === '' || !is_string($newPasswordHash) || trim($newPasswordHash) === '') {
                 throw new ApiException(422, 'invalid_password_resets', "Password reset entries must contain non-empty id, login and newPasswordHash in {$fullPath}");
@@ -209,8 +225,11 @@ final class JsonRepository
             if ($sessionVersion !== null && (!is_int($sessionVersion) || $sessionVersion < 0)) {
                 throw new ApiException(422, 'invalid_password_resets', "Password reset entry '{$id}' has invalid sessionVersion in {$fullPath}");
             }
+            if ($accountId !== null && (!is_string($accountId) || preg_match('/^[a-f0-9]{32}$/', $accountId) !== 1)) {
+                throw new ApiException(422, 'invalid_password_resets', "Password reset entry '{$id}' has invalid accountId in {$fullPath}");
+            }
 
-            $resets[] = [
+            $reset = [
                 'id' => $id,
                 'login' => $login,
                 'newPasswordHash' => $newPasswordHash,
@@ -218,6 +237,10 @@ final class JsonRepository
                 'usedAt' => $usedAt === null ? null : (int) $usedAt,
                 'sessionVersion' => $sessionVersion,
             ];
+            if ($accountId !== null) {
+                $reset['accountId'] = $accountId;
+            }
+            $resets[] = $reset;
         }
 
         return ['resets' => $resets];
@@ -246,10 +269,51 @@ final class JsonRepository
         }
     }
 
+    /** @return array<string,mixed>|null */
+    public function loadWishlist(string $directory, string $identity): ?array
+    {
+        $path = $this->wishlistPath($directory, $identity);
+        return is_file($path) ? $this->decodeJsonFile($path) : null;
+    }
+
+    /** @param array<string,mixed> $document */
+    public function saveWishlist(string $directory, string $identity, array $document): void
+    {
+        $this->saveJson($this->wishlistPath($directory, $identity), $document);
+    }
+
+    public function deleteWishlist(string $directory, string $identity): void
+    {
+        $path = $this->wishlistPath($directory, $identity);
+        foreach ([$path . '.tmp', $path] as $file) {
+            if (is_file($file) && !unlink($file)) {
+                throw new ApiException(500, 'io_error', 'Cannot delete wishlist');
+            }
+        }
+    }
+
+    private function wishlistPath(string $directory, string $identity): string
+    {
+        return $this->resolvePath($directory) . DIRECTORY_SEPARATOR . hash('sha256', $identity) . '.json';
+    }
+
     /** @param array{years: array<int, array<string,string>>} $history */
     public function saveHistory(string $path, array $history): void
     {
-        $this->saveJson($path, ['years' => $history['years']]);
+        $years = [];
+        foreach ($history['years'] as $year => $assignments) {
+            $years[$year] = (object) $assignments;
+        }
+        $this->saveJson($path, ['years' => (object) $years]);
+    }
+
+    /** @param array{users:string[], forbiddenRecipientsByGiver:array<string,string[]>} $constraints */
+    public function saveConstraints(string $path, array $constraints): void
+    {
+        $this->saveJson($path, [
+            'users' => $constraints['users'],
+            'forbiddenRecipientsByGiver' => (object) $constraints['forbiddenRecipientsByGiver'],
+        ]);
     }
 
     private function resolvePath(string $path): string

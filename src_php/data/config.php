@@ -16,6 +16,8 @@ return [
 
     'users_file_path' => 'data/users.json',
     'password_resets_file_path' => 'data/passwordResets.json',
+    'wishlist_directory' => 'data/wishlists',
+    'wishlist_frontend_url' => '',
 
     'smtp_host' => 'smtp.example.com',
     'smtp_port' => 25,

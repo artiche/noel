@@ -1,0 +1,10 @@
+.spacer { flex: 1; }
+main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+mat-card { margin-bottom: 1.5rem; }
+mat-card[hidden] { display: none; }
+.actions, .url-input { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.images { display: grid; gap: .5rem; margin: 1.25rem 0; }
+.images p { margin: 0; }
+input[type='url'] { flex: 1; min-width: 12rem; padding: .6rem; }
+::ng-deep .ql-editor { min-height: 12rem; overflow-wrap: anywhere; }
+::ng-deep .ql-editor img { max-width: 100%; }

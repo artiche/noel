@@ -33,9 +33,32 @@ La déconnexion expire le cookie du navigateur ; elle ne révoque pas un jeton c
 
 Le rôle `isAdmin` est récupéré via `GET /api/session` après connexion et lors
 d'une ouverture directe ; le JWT reste dans son cookie HttpOnly. L'état de
-session est effacé à la déconnexion ou à l'expiration. Il est disponible pour
-de futures personnalisations ; les autorisations sont toujours vérifiées par
-l'API. Les sessions anciennes sans rôle nécessitent une reconnexion.
+session est effacé à la déconnexion ou à l'expiration. Les administrateurs
+accèdent à l'écran **Administration** depuis le bandeau pour gérer comptes,
+participants et interdictions. Un compte peut être créé depuis un participant
+avec un identifiant proposé sans accents ni majuscules. Le mot de passe initial
+généré n'est pas communiqué ; un email de réinitialisation peut être demandé
+à la création ou ultérieurement. Les autorisations sont toujours vérifiées
+par l'API. Les sessions anciennes sans rôle nécessitent une reconnexion.
+
+Les noms des attributions sont mis en gras. Les lignes où le participant
+connecté donne ou reçoit sont distinguées par leur couleur et un libellé,
+selon les clés normalisées fournies par l'API. Déployer l'API mise à jour avant
+cette version du frontend.
+
+Les comptes associés à un participant disposent de l'écran **Wishlist**. La
+wishlist personnelle est enregistrée explicitement et conservée d'une année à
+l'autre. On peut y ajouter des images locales ou des images par URL HTTPS ;
+ces dernières contactent leur serveur lorsque la wishlist est affichée.
+L'écran propose la wishlist du destinataire du dernier tirage jusqu'à l'année
+en cours et l'envoi manuel d'un lien au donneur. Le lien nécessite une
+connexion et les droits sont revérifiés par l'API au moment de la lecture.
+Déployer et configurer l'API wishlist avant cette version du frontend ; voir
+la documentation PHP pour le stockage privé et la configuration SMTP/URL.
+
+L'éditeur utilise Quill 2.0.3. L'avis GHSA-v3m3-f69x-jf25 concerne l'export
+HTML de formules et vidéos : l'application n'exporte pas de HTML et l'API
+rejette ces formats ; les documents sont échangés en Delta validé.
 
 ## Habillage et accessibilité
 

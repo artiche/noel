@@ -5,6 +5,7 @@ Version PHP (sans framework) du moteur de tirage, dans `src_php/`.
 ## Prerequis
 
 - PHP 8.2+
+- Extensions PHP `intl` et `mbstring` (normalisation des identifiants Unicode)
 - Fichier `src_php/data/config.php` (template versionne, obligatoire)
 - Fichier `src_php/data/config.local.php` (optionnel, non versionne, recommande pour les secrets)
 
@@ -49,6 +50,8 @@ Retourne l'etat de l'API.
 ### `POST /login`
 
 Authentifie un utilisateur et renvoie un cookie de session JWT.
+La comparaison du login ignore la casse et les accents ; le login conserve
+dans la session reste celui du fichier utilisateurs.
 
 Body JSON:
 
@@ -71,13 +74,116 @@ valide jusqu'a son expiration : cet endpoint ne revoque pas les jetons.
 
 ### `GET /session`
 
-Retourne `data.authenticated: true` et `data.isAdmin` pour la session authentifiee.
-Le cookie JWT reste `HttpOnly` ; la reponse ne contient ni jeton ni email et
-ne doit pas etre mise en cache. Une session absente ou invalide retourne `401`.
+Retourne `data.authenticated`, `data.isAdmin`, le `login` canonique, l'`email`
+du compte et `participant`, le nom correspondant dans les contraintes ou
+`null` en l'absence de correspondance. `participantKey` contient le nom
+normalise sans casse ni accents, ou `null` si aucun participant n'est associe.
+Le cookie JWT reste `HttpOnly` ; la
+reponse ne contient ni jeton ni hash et ne doit pas etre mise en cache. Une
+session absente ou invalide retourne `401`.
+
+### `POST /account`
+
+Modifie immediatement le compte authentifie, sans confirmation par email.
+Le corps contient `currentPassword` et au moins un des champs `email` et
+`newPassword`. L'email doit etre valide ; le nouveau mot de passe non vide ne
+doit pas contenir de caractere NUL ni depasser 72 octets. L'utilisateur ne
+peut modifier ni son login ni son role. Une reponse `403` avec le code
+`invalid_current_password` indique un mot de passe actuel incorrect ; des
+champs invalides renvoient `400`.
+
+Un changement de mot de passe revoque les sessions precedentes et les liens
+de reset, et fournit un nouveau cookie pour maintenir la session courante. Un
+changement d'email conserve les sessions mais invalide les demandes de reset
+en attente envoyees a l'ancienne adresse. La reponse contient
+`data.updated: true` et ne doit pas etre mise en cache.
+
+### Wishlists des participants
+
+Configurer `wishlist_directory` dans un repertoire prive accessible en lecture
+et ecriture par PHP, hors du repertoire public. Par defaut il s'agit de
+`data/wishlists`, protege par le `.htaccess` de `data` sur Apache ; sur un autre
+serveur, interdire explicitement tout acces HTTP direct a ce repertoire.
+Les documents et leurs images sont stockes ensemble ; ce repertoire ne doit
+pas etre publie ni versionne et doit etre inclus dans les sauvegardes privees.
+Configurer aussi `wishlist_frontend_url` dans `config.local.php` avec l'URL
+HTTPS de base de l'interface, par exemple `https://example.com/noel`, sans
+query ni fragment. La configuration SMTP utilisee est celle des resets.
+
+Les routes requierent une session valide dont le login correspond a un
+participant actuel, sans tenir compte de la casse ni des accents :
+
+- `GET /wishlist` renvoie le document personnel, sa revision et le
+  destinataire du tirage le plus recent jusqu'a l'annee courante du serveur,
+  ou `null` en l'absence d'attribution.
+- `PUT /wishlist` recoit `ops` (document Quill Delta) et `revision`.
+  La revision evite d'ecraser une modification concurrente (`409`).
+- `GET /wishlist/recipient?target=...` retourne la wishlist du destinataire
+  si, et seulement si, le demandeur est son donneur dans le dernier tirage.
+  La cible est la cle normalisee fournie par l'API ; elle ne confere aucun
+  droit. L'autorisation est recalculee pour chaque consultation.
+- `POST /wishlist/notify` envoie au donneur du demandeur un lien cible vers
+  l'interface. L'envoi n'est pas automatique ni limite ; une absence de
+  tirage ou de compte donneur et les erreurs SMTP sont signalees.
+
+Les images importees PNG, JPEG, GIF et WebP sont integrees au document : au
+maximum 5 Mo (5 000 000 octets) par image et 20 Mo d'images par wishlist. Les URL d'images
+externes doivent etre HTTPS ; elles sont chargees par le navigateur, pas par
+le serveur. Le document n'accepte qu'un sous-ensemble de formats Quill et de
+liens HTTP(S). L'API ne stocke ni ne rend de HTML arbitraire.
+Pour ces tailles, autoriser des requetes JSON d'au moins 29 Mio dans le serveur
+web/proxy et prevoir suffisamment de memoire PHP (512 Mio recommandes). La
+limite applicative des requetes est de 29 Mio ; un `413` signale un depassement.
+Les reponses wishlist ne doivent pas etre mises en cache.
+
+La wishlist survit aux changements d'annee et a la suppression du seul compte.
+La suppression du participant supprime sa wishlist et les images integrees ;
+un changement de graphie equivalent conserve la wishlist. Les fichiers de
+donnees sont synchronises avec le verrou utilisateur. Un lien ancien cesse de
+donner acces des que le tirage pertinent ne l'autorise plus.
+
+### Administration des comptes et participants
+
+Toutes les routes `/admin/*` requierent un compte administrateur actif.
+Les roles sont verifies depuis le fichier utilisateurs a chaque requete :
+une promotion ou retrogradation prend effet immediatement, y compris pour
+les sessions existantes. Le dernier administrateur ne peut etre ni supprime
+ni retrograde.
+
+- `GET /admin/users` retourne `users` (login, email, isAdmin) et `participants`
+  (nom, login associe ou null, login suggere, destinataires interdits), sans
+  hash ni mot de passe ; la reponse ne doit pas etre mise en cache.
+- `POST /admin/users` prend `login`, `email`, `isAdmin` et eventuellement
+  `participant`. Si ce dernier est fourni, son nom doit correspondre au
+  login sans casse ni accents. Un mot de passe aleatoire non communique est
+  genere et seul son hash est conserve.
+- `PATCH /admin/users` prend `login` et au moins un champ parmi `email`,
+  `isAdmin`, `password`. Le login n'est pas modifiable. Le mot de passe
+  manuel ne doit pas depasser 72 octets ni contenir NUL.
+- `DELETE /admin/users` prend `login`. La suppression revoque ses sessions et
+  liens de reinitialisation, sans supprimer son participant ni ses tirages.
+- `POST /admin/users/reset` prend `login` et envoie l'email de reset existant.
+  La creation et l'envoi sont deux operations distinctes : si l'envoi echoue,
+  le compte reste cree et l'envoi peut etre retente.
+- `POST /admin/participants` prend `name` et ajoute un participant sans
+  interdiction. `PATCH /admin/participants` prend `name` et au moins un des
+  champs `newName` et `forbiddenRecipients`. Le nouveau nom doit etre
+  equivalent a l'ancien sans casse ni accents ; les references des
+  interdictions sont mises a jour. `DELETE /admin/participants` prend `name`
+  et retire aussi ses references dans les interdictions, sans supprimer son
+  compte ni modifier l'historique.
+
+Les operations d'administration et les enregistrements de tirage partagent
+le verrou utilisateur. La suppression d'un participant et celle de son compte
+sont independantes : en cas d'echec de la seconde, la premiere demeure
+effectuee. Un changement manuel de mot de passe revoque les sessions et liens
+de reset precedents ; un changement d'email invalide les demandes de reset
+adressees a l'ancien email.
 
 ### `POST /password/forgot`
 
 Demande un reset de mot de passe pour un login donne.
+Le login est compare sans tenir compte de la casse ni des accents.
 
 Body JSON:
 
@@ -124,6 +230,13 @@ Route protegee (JWT requis).
 Le payload contient:
 - `assignmentsByGiver`: map `donneur -> receveur`
 - `lines`: tableau de phrases `donneur offre un cadeau a receveur`
+- `assignments`: tableau ordonne contenant `giver`, `recipient` et leurs cles
+  normalisees `giverKey`, `recipientKey` pour la comparaison des identites
+
+Les noms proviennent de l'historique et conservent leur graphie d'origine,
+independamment des participants actuels. Pour les futurs calculs, les
+rencontres historiques sont rapprochees sans casse ni accents. Les collisions
+ambigues dans une annee historique sont refusees.
 
 ### `POST /draw`
 
@@ -157,6 +270,15 @@ L'API utilise les memes structures que la version .NET 10:
 - `src_php/data/users.json` (login + hash mot de passe + email + `isAdmin`)
 - `src_php/data/passwordResets.json` (demandes de reset en attente / consommees)
 
+Les noms des participants et les logins applicatifs doivent etre uniques apres
+suppression des accents et normalisation de la casse Unicode. Toute collision
+est rejetee explicitement ; corriger les fichiers concernes avant deploiement.
+L'association est calculee depuis les fichiers actuels et ne modifie pas les
+droits d'acces ni les resultats du tirage.
+La liste des participants peut etre vide ; les nouveaux calculs renvoient alors
+`422` avec le code `no_participants`, tandis que les tirages historiques
+restent consultables.
+
 ### Securiser le dossier `data` (recommande en production)
 
 Le dossier `data` contient des informations sensibles (utilisateurs/hash et historique). Il doit idealement rester hors webroot. Si ce n'est pas possible sur l'hebergement, ajoutez un `.htaccess` dans `src_php/data/` pour bloquer l'acces HTTP direct:
@@ -181,10 +303,10 @@ Deny from all
 `isAdmin` est un booleen JSON. Un champ absent vaut `false` ; une valeur
 presente non booleenne est rejetee. Attribuez explicitement `true` aux comptes
 administrateurs dans le fichier utilisateurs de production sans ecraser ses
-donnees existantes. Le role est inclus dans le JWT signe, sans l'email. Un
-changement de role prend effet a la prochaine connexion ou a l'expiration du
-JWT : il ne revoque pas immediatement les sessions existantes. Les anciens
-jetons sans role sont refuses et necessitent une reconnexion.
+donnees existantes. Le role est inclus dans le JWT signe, sans l'email, mais
+les droits effectifs sont toujours relus dans le fichier utilisateurs. Un
+changement de role prend effet immediatement sans revoquer la session. Les
+anciens jetons sans role sont refuses et necessitent une reconnexion.
 
 Les chemins des fichiers utilisateurs et de reinitialisation sont definis
 uniquement par la configuration serveur. Les parametres clients `usersFile`
@@ -193,6 +315,10 @@ Une version de session est associee au compte et verifiee a chaque requete
 authentifiee. Confirmer un reset l'incremente et revoque donc tous les JWT
 precedents du compte. Les anciens JWT sans version necessitent une reconnexion.
 Un utilisateur existant sans `sessionVersion` commence a zero.
+Les comptes crees par l'administration possedent un identifiant d'incarnation :
+apres suppression et recreation d'un meme login, les anciens jetons et liens
+de reset ne peuvent pas etre reutilises. Les comptes preexistants sans cet
+identifiant continuent a fonctionner.
 
 ## Configuration reset password / SMTP
 

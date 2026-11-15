@@ -101,30 +101,33 @@ final class DrawService
      */
     private function validateConsistency(array $constraints, array $history, int $targetYear): void
     {
-        $users = $constraints['users'];
-        $knownUsers = array_fill_keys($users, true);
-
+        if (count($constraints['users']) === 0) {
+            throw new ApiException(422, 'no_participants', 'No participants are available for a draw');
+        }
         foreach ($history['years'] as $year => $assignments) {
             if ($year >= $targetYear) {
                 continue;
             }
-            if (count($assignments) !== count($users)) {
-                throw new ApiException(422, 'invalid_history', "History {$year} has inconsistent participant count");
-            }
+            $this->validateHistoryYear($year, $assignments);
+        }
+    }
 
-            $seenGivers = [];
-            foreach ($assignments as $recipient => $giver) {
-                if (!isset($knownUsers[$recipient])) {
-                    throw new ApiException(422, 'invalid_history', "Unknown recipient '{$recipient}' in history {$year}");
-                }
-                if (!isset($knownUsers[$giver])) {
-                    throw new ApiException(422, 'invalid_history', "Unknown giver '{$giver}' in history {$year}");
-                }
-                if (isset($seenGivers[$giver])) {
-                    throw new ApiException(422, 'invalid_history', "Giver '{$giver}' appears more than once in history {$year}");
-                }
-                $seenGivers[$giver] = true;
+    /** @param array<string,string> $assignments */
+    public function validateHistoryYear(int $year, array $assignments): void
+    {
+        $recipients = [];
+        $givers = [];
+        foreach ($assignments as $recipient => $giver) {
+            $recipientId = Identity::normalize((string) $recipient);
+            $giverId = Identity::normalize($giver);
+            if (isset($recipients[$recipientId]) || isset($givers[$giverId])) {
+                throw new ApiException(422, 'invalid_history', "Ambiguous participants in history {$year}");
             }
+            $recipients[$recipientId] = true;
+            $givers[$giverId] = true;
+        }
+        if ($recipients === [] || array_diff_key($recipients, $givers) !== [] || array_diff_key($givers, $recipients) !== []) {
+            throw new ApiException(422, 'invalid_history', "Inconsistent participants in history {$year}");
         }
     }
 }

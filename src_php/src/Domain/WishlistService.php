@@ -1,0 +1,242 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Noel\Api\Domain;
+
+use Noel\Api\Http\ApiException;
+use Noel\Api\Infrastructure\JsonRepository;
+
+final class WishlistService
+{
+    private const MAX_IMAGE_BYTES = 5_000_000;
+    private const MAX_IMAGES_BYTES = 20_000_000;
+    private const MAX_TEXT_BYTES = 256 * 1024;
+
+    public function __construct(
+        private readonly JsonRepository $repository,
+        private readonly DrawService $drawService,
+        private readonly string $directory,
+        private readonly string $constraintsPath,
+        private readonly string $historyPath,
+        private readonly string $usersPath,
+        private readonly ?WishlistNotifier $notifier,
+        private readonly string $frontendUrl
+    ) {
+    }
+
+    /** @return array<string,mixed> */
+    public function own(string $login): array
+    {
+        $participant = $this->participant($login);
+        $document = $this->document(Identity::normalize($participant));
+        $assignment = $this->assignment($participant);
+        return [
+            'participant' => $participant,
+            'ops' => $document['ops'],
+            'revision' => $this->revision($document['ops']),
+            'recipient' => $assignment === null ? null : [
+                'name' => $assignment['recipient'],
+                'key' => Identity::normalize($assignment['recipient']),
+                'year' => $assignment['year'],
+            ],
+        ];
+    }
+
+    /** @param array<string,mixed> $body @return array<string,mixed> */
+    public function save(string $login, array $body): array
+    {
+        $participant = $this->participant($login);
+        $identity = Identity::normalize($participant);
+        $revision = $body['revision'] ?? null;
+        if (!is_string($revision) || !hash_equals($this->revision($this->document($identity)['ops']), $revision)) {
+            throw new ApiException(409, 'wishlist_changed', 'Wishlist has changed since it was loaded');
+        }
+        $ops = $body['ops'] ?? null;
+        $this->validateOps($ops);
+        $this->repository->saveWishlist($this->directory, $identity, ['ops' => $ops]);
+        return ['revision' => $this->revision($ops)];
+    }
+
+    /** @return array<string,mixed> */
+    public function recipient(string $login, string $target): array
+    {
+        $participant = $this->participant($login);
+        $assignment = $this->assignment($participant);
+        if ($assignment === null || !hash_equals(Identity::normalize($assignment['recipient']), $target)) {
+            throw new ApiException(403, 'wishlist_forbidden', 'Wishlist is not available for this draw');
+        }
+        $recipient = $this->participant($assignment['recipient']);
+        return [
+            'participant' => $recipient,
+            'year' => $assignment['year'],
+            'ops' => $this->document(Identity::normalize($recipient))['ops'],
+        ];
+    }
+
+    public function notifyGiver(string $login): void
+    {
+        $participant = $this->participant($login);
+        $assignment = $this->assignment($participant);
+        if ($assignment === null) {
+            throw new ApiException(404, 'draw_assignment_missing', 'No assignment in the latest draw');
+        }
+        $giver = $this->participant($assignment['giver']);
+        $user = null;
+        foreach ($this->repository->loadUsers($this->usersPath)['users'] as $candidate) {
+            if (Identity::normalize($candidate['login']) === Identity::normalize($giver)) {
+                $user = $candidate;
+                break;
+            }
+        }
+        if ($user === null) {
+            throw new ApiException(404, 'giver_account_missing', 'Giver has no account');
+        }
+        if ($this->notifier === null || !$this->safeUrl($this->frontendUrl, ['https'])
+            || parse_url($this->frontendUrl, PHP_URL_QUERY) !== null
+            || parse_url($this->frontendUrl, PHP_URL_FRAGMENT) !== null) {
+            throw new ApiException(500, 'wishlist_config_missing', 'Wishlist notification is not configured');
+        }
+        $url = rtrim($this->frontendUrl, '/') . '/wishlist?target=' . rawurlencode(Identity::normalize($participant));
+        $this->notifier->sendWishlistEmail($user['login'], $user['email'], $participant, $url);
+    }
+
+    private function participant(string $identity): string
+    {
+        $normalized = Identity::normalize($identity);
+        foreach ($this->repository->loadConstraints($this->constraintsPath)['users'] as $name) {
+            if (Identity::normalize($name) === $normalized) {
+                return $name;
+            }
+        }
+        throw new ApiException(403, 'participant_required', 'A participant account is required');
+    }
+
+    /** @return array{year:int,recipient:string,giver:string}|null */
+    private function assignment(string $participant): ?array
+    {
+        $years = $this->repository->loadHistory($this->historyPath)['years'];
+        $year = null;
+        $currentYear = (int) date('Y');
+        foreach ($years as $candidate => $_) {
+            if ($candidate <= $currentYear && ($year === null || $candidate > $year)) {
+                $year = $candidate;
+            }
+        }
+        if ($year === null) {
+            return null;
+        }
+        $draw = $years[$year];
+        $this->drawService->validateHistoryYear($year, $draw);
+        $key = Identity::normalize($participant);
+        $recipient = null;
+        $giver = null;
+        foreach ($draw as $recipientName => $giverName) {
+            if (Identity::normalize($giverName) === $key) {
+                $recipient = (string) $recipientName;
+            }
+            if (Identity::normalize((string) $recipientName) === $key) {
+                $giver = $giverName;
+            }
+        }
+        return $recipient === null || $giver === null ? null : [
+            'year' => $year, 'recipient' => $recipient, 'giver' => $giver,
+        ];
+    }
+
+    /** @return array{ops:array} */
+    private function document(string $identity): array
+    {
+        $document = $this->repository->loadWishlist($this->directory, $identity);
+        if ($document === null) {
+            return ['ops' => [['insert' => "\n"]]];
+        }
+        $ops = $document['ops'] ?? null;
+        $this->validateOps($ops);
+        return ['ops' => $ops];
+    }
+
+    private function revision(array $ops): string
+    {
+        $encoded = json_encode($ops, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($encoded)) {
+            throw new ApiException(500, 'serialization_error', 'Cannot encode wishlist');
+        }
+        return hash('sha256', $encoded);
+    }
+
+    private function validateOps(mixed $ops): void
+    {
+        if (!is_array($ops) || !array_is_list($ops) || count($ops) > 10000) {
+            throw new ApiException(400, 'invalid_wishlist', 'Invalid wishlist document');
+        }
+        $imageBytes = 0;
+        $textBytes = 0;
+        foreach ($ops as $op) {
+            if (!is_array($op) || array_diff(array_keys($op), ['insert', 'attributes']) !== []) {
+                throw new ApiException(400, 'invalid_wishlist', 'Invalid wishlist operation');
+            }
+            $insert = $op['insert'] ?? null;
+            if (is_string($insert)) {
+                $textBytes += strlen($insert);
+            } elseif (is_array($insert) && count($insert) === 1 && is_string($insert['image'] ?? null)) {
+                $imageBytes += $this->validateImage($insert['image']);
+            } else {
+                throw new ApiException(400, 'invalid_wishlist', 'Unsupported wishlist content');
+            }
+            $attributes = $op['attributes'] ?? [];
+            if (!is_array($attributes)) {
+                throw new ApiException(400, 'invalid_wishlist', 'Invalid formatting');
+            }
+            foreach ($attributes as $name => $value) {
+                $valid = match ($name) {
+                    'bold', 'italic', 'underline', 'strike' => $value === true,
+                    'header' => is_int($value) && $value >= 1 && $value <= 3,
+                    'list' => in_array($value, ['ordered', 'bullet'], true),
+                    'link' => is_string($value) && $this->safeUrl($value, ['https', 'http']),
+                    default => false,
+                };
+                if (!$valid) {
+                    throw new ApiException(400, 'invalid_wishlist', 'Unsupported formatting');
+                }
+            }
+        }
+        if ($imageBytes > self::MAX_IMAGES_BYTES || $textBytes > self::MAX_TEXT_BYTES) {
+            throw new ApiException(413, 'wishlist_too_large', 'Wishlist exceeds its size limit');
+        }
+    }
+
+    private function validateImage(string $image): int
+    {
+        if ($this->safeUrl($image, ['https'])) {
+            return 0;
+        }
+        if (strlen($image) > (int) ceil(self::MAX_IMAGE_BYTES / 3) * 4 + 128) {
+            throw new ApiException(413, 'image_too_large', 'Image exceeds 5 MB');
+        }
+        if (preg_match('#^data:image/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/=]+)$#D', $image, $matches) !== 1) {
+            throw new ApiException(400, 'invalid_image', 'Invalid image');
+        }
+        $bytes = base64_decode($matches[2], true);
+        if ($bytes === false || strlen($bytes) > self::MAX_IMAGE_BYTES) {
+            throw new ApiException(413, 'image_too_large', 'Image exceeds 5 MB');
+        }
+        $info = @getimagesizefromstring($bytes);
+        if ($info === false || ($info['mime'] ?? '') !== 'image/' . $matches[1]
+            || $info[0] > 10000 || $info[1] > 10000 || $info[0] * $info[1] > 40000000) {
+            throw new ApiException(400, 'invalid_image', 'Invalid image content');
+        }
+        return strlen($bytes);
+    }
+
+    /** @param string[] $schemes */
+    private function safeUrl(string $url, array $schemes): bool
+    {
+        if (preg_match('/[\x00-\x20\x7f]/', $url) === 1 || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+        $parts = parse_url($url);
+        return is_array($parts) && in_array(strtolower($parts['scheme'] ?? ''), $schemes, true)
+            && isset($parts['host']) && !isset($parts['user']) && !isset($parts['pass']);
+    }
+}

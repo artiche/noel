@@ -3,9 +3,12 @@ import { DOCUMENT } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTableModule } from '@angular/material/table';
@@ -13,7 +16,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { catchError, map, of, switchMap } from 'rxjs';
 import confetti from 'canvas-confetti';
-import { Api, Draw, FIRST_YEAR, isMissingDraw } from './api';
+import { Api, Draw, DrawAssignment, FIRST_YEAR, isMissingDraw } from './api';
 import { SessionService } from './session';
 
 type DrawState =
@@ -27,7 +30,7 @@ type DrawState =
   selector: 'app-draws',
   imports: [
     MatButtonModule, MatCardModule, MatIconModule, MatMenuModule, MatProgressSpinnerModule,
-    MatTableModule, MatToolbarModule, RouterLink,
+    MatTableModule, MatToolbarModule, MatFormFieldModule, MatInputModule, ReactiveFormsModule, RouterLink,
   ],
   templateUrl: './draws.html',
   styleUrl: './draws.scss',
@@ -46,6 +49,17 @@ export class Draws {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly formBuilder = inject(FormBuilder);
+  protected readonly user = this.session.session;
+  protected readonly accountOpen = signal(false);
+  protected readonly accountBusy = signal(false);
+  protected readonly accountError = signal('');
+  protected readonly accountMessage = signal('');
+  protected readonly accountForm = this.formBuilder.nonNullable.group({
+    email: ['', [Validators.required, Validators.email]],
+    currentPassword: ['', Validators.required],
+    newPassword: [''],
+  });
   private readonly motionPreference = inject(DOCUMENT).defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)');
   private readonly currentYear = new Date().getFullYear();
   protected readonly years = Array.from(
@@ -119,6 +133,69 @@ export class Draws {
         this.logoutError.set('La déconnexion a échoué. Veuillez réessayer.');
       },
     });
+  }
+
+  protected isGiver(assignment: DrawAssignment): boolean {
+    const participantKey = this.user()?.participantKey;
+    return participantKey != null && assignment.giverKey === participantKey;
+  }
+
+  protected isRecipient(assignment: DrawAssignment): boolean {
+    const participantKey = this.user()?.participantKey;
+    return participantKey != null && assignment.recipientKey === participantKey;
+  }
+
+  protected openAccount(): void {
+    const user = this.user();
+    if (!user) return;
+    this.accountForm.reset({ email: user.email, currentPassword: '', newPassword: '' });
+    this.accountError.set('');
+    this.accountMessage.set('');
+    this.accountOpen.set(true);
+  }
+
+  protected updateAccount(): void {
+    if (this.accountForm.invalid || this.accountBusy()) {
+      this.accountForm.markAllAsTouched();
+      return;
+    }
+    const user = this.user();
+    if (!user) return;
+    const { email, currentPassword, newPassword } = this.accountForm.getRawValue();
+    const changedEmail = email !== user.email ? email : undefined;
+    if (changedEmail === undefined && newPassword === '') {
+      this.accountError.set('Modifiez l’email ou renseignez un nouveau mot de passe.');
+      return;
+    }
+    this.accountBusy.set(true);
+    this.accountError.set('');
+    this.accountMessage.set('');
+    this.api.updateAccount(currentPassword, changedEmail, newPassword || undefined)
+      .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+        next: () => {
+          this.accountForm.controls.currentPassword.reset();
+          this.accountForm.controls.newPassword.reset();
+          this.session.load().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+            next: () => {
+              this.accountBusy.set(false);
+              this.accountOpen.set(false);
+              this.accountMessage.set('Votre compte a été modifié.');
+            },
+            error: () => {
+              this.accountBusy.set(false);
+              this.accountOpen.set(false);
+              this.accountError.set('Le compte a été modifié, mais la session n’a pas pu être rechargée.');
+            },
+          });
+        },
+        error: (error: unknown) => {
+          this.accountBusy.set(false);
+          this.accountError.set(error instanceof HttpErrorResponse && error.status === 403 &&
+            error.error?.error?.code === 'invalid_current_password'
+            ? 'Le mot de passe actuel est incorrect.'
+            : 'Impossible de modifier le compte. Veuillez réessayer.');
+        },
+      });
   }
 
   protected loadSession(): void {

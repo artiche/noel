@@ -17,7 +17,8 @@ mat-toolbar {
   color: #ead48a;
 }
 
-mat-toolbar button {
+mat-toolbar button,
+mat-toolbar a {
   color: #fffdf8;
 }
 
@@ -33,6 +34,20 @@ main {
 
 .results-card mat-card-content {
   padding: clamp(1.5rem, 5vw, 3.5rem);
+}
+
+.account-card {
+  margin-bottom: 1.5rem;
+}
+
+.account-card form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.account-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .result-heading,
@@ -105,6 +120,46 @@ th {
   color: #1b4332;
   background: #f4ede2;
   font-weight: 700;
+}
+
+td.mat-mdc-cell {
+  padding-top: 0.8rem;
+  padding-bottom: 0.8rem;
+  font-size: clamp(1.1rem, 2vw, 1.25rem);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.giver td.mat-mdc-cell {
+  background: #e4f0e2;
+  box-shadow: inset 4px 0 #1b4332;
+  color: #1b4332;
+}
+
+.recipient td.mat-mdc-cell {
+  background: #fff0d6;
+  box-shadow: inset 4px 0 #754509;
+  color: #51320b;
+}
+
+.giver.recipient td.mat-mdc-cell {
+  background: linear-gradient(90deg, #e4f0e2 50%, #fff0d6 50%);
+  box-shadow: inset 4px 0 #1b4332, inset -4px 0 #754509;
+}
+
+.your-assignment {
+  display: inline-block;
+  margin-left: 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.giver-label {
+  color: #1b4332;
+}
+
+.recipient-label {
+  color: #51320b;
 }
 
 td mat-icon {

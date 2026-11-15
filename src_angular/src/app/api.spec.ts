@@ -10,6 +10,7 @@ describe('API des tirages', () => {
     year: 2022,
     assignmentsByGiver: { Alice: 'Bob' },
     lines: ['Alice offre un cadeau à Bob'],
+    assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }],
   };
 
   beforeEach(() => {
@@ -44,6 +45,25 @@ describe('API des tirages', () => {
     let failed = false;
     api.session().subscribe({ error: () => failed = true });
     http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: 'true' } });
+    expect(failed).toBe(true);
+  });
+
+  it('refuse une session sans clé normalisée cohérente', () => {
+    let failed = false;
+    api.session().subscribe({ error: () => failed = true });
+    http.expectOne('/api/session').flush({
+      data: { authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com',
+        participant: 'Alice', participantKey: null },
+    });
+    expect(failed).toBe(true);
+  });
+
+  it('refuse un tirage sans attribution structurée valide', () => {
+    let failed = false;
+    api.draw(2022).subscribe({ error: () => failed = true });
+    http.expectOne('/api/draw/2022').flush({
+      data: { ...draw, assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice' }] },
+    });
     expect(failed).toBe(true);
   });
 

@@ -40,6 +40,8 @@ try {
     $usersFilePath = readRequiredConfigString($config, 'users_file_path');
     $passwordResetsFilePath = readRequiredConfigString($config, 'password_resets_file_path');
     $passwordResetConfirmationBaseUrl = readRequiredConfigString($config, 'password_reset_confirm_base_url');
+    $wishlistDirectory = readRequiredConfigString($config, 'wishlist_directory');
+    $wishlistFrontendUrl = readOptionalConfigString($config, 'wishlist_frontend_url', '');
 
     $jwtService = new JwtService($jwtSecret);
     $authService = new AuthService($jwtService);
@@ -62,7 +64,12 @@ try {
         $basePath === '' ? '/' : $basePath,
         $usersFilePath,
         $passwordResetsFilePath,
-        $loginRedirectUrl
+        $loginRedirectUrl,
+        'data/constraints.json',
+        'data/history.json',
+        $wishlistDirectory,
+        $passwordResetNotifier,
+        $wishlistFrontendUrl
     );
 
     $rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
@@ -74,7 +81,17 @@ try {
 
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $query = $_GET;
-    $input = file_get_contents('php://input');
+    $inputLimit = 29 * 1024 * 1024;
+    $input = $method === 'PUT' && $path === '/wishlist'
+        ? file_get_contents('php://input', false, null, 0, $inputLimit + 1)
+        : file_get_contents('php://input');
+    if ($method === 'PUT' && $path === '/wishlist' && is_string($input) && strlen($input) > $inputLimit) {
+        http_response_code(413);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo json_encode(['error' => ['code' => 'wishlist_too_large', 'message' => 'Wishlist exceeds its size limit']]);
+        exit;
+    }
     $jsonBody = null;
     if (is_string($input) && $input !== '') {
         $decoded = json_decode($input, true);

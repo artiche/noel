@@ -1,0 +1,55 @@
+mat-toolbar {
+  background: #1b4332;
+  color: #fffdf8;
+}
+
+mat-toolbar a {
+  color: #fffdf8;
+}
+
+.spacer {
+  flex: 1;
+}
+
+main {
+  max-width: 70rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+mat-card {
+  margin-bottom: 1.5rem;
+}
+
+.section-heading,
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.section-heading {
+  justify-content: space-between;
+}
+
+.entry {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e6d9bd;
+}
+
+form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  max-width: 36rem;
+}
+
+fieldset {
+  display: grid;
+  border: 1px solid #e6d9bd;
+}
+
+.error {
+  color: #9b2226;
+}

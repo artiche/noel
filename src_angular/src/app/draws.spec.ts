@@ -31,7 +31,7 @@ describe('Consultation des tirages', () => {
     http = TestBed.inject(HttpTestingController);
     harness = await RouterTestingHarness.create();
     TestBed.inject(SessionService).load().subscribe();
-    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: false } });
+    http.expectOne('/api/session').flush({ data: { authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com', participant: null, participantKey: null } });
   });
 
   afterEach(() => {
@@ -45,12 +45,133 @@ describe('Consultation des tirages', () => {
       { error: { code: 'draw_not_found' } }, { status: 404, statusText: 'Not Found' },
     );
     http.expectOne(`/api/draw/${currentYear - 1}`).flush({
-      data: { year: currentYear - 1, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'] },
+      data: { year: currentYear - 1, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'], assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
     });
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain(`Tirage ${currentYear - 1}`);
     expect(harness.routeNativeElement?.textContent).toContain('Alice offre un cadeau à Bob');
     expect(confettiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('met en évidence les deux rôles lorsque la session arrive après le tirage', async () => {
+    const session = TestBed.inject(SessionService);
+    session.clear();
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    const pendingSession = http.expectOne('/api/session');
+    const assignments = [
+      { giver: 'BÉATRICE', recipient: 'Alpha offre un cadeau à Beta', giverKey: 'beatrice', recipientKey: 'alpha offre un cadeau a beta' },
+      { giver: 'Bob', recipient: 'Beatrice', giverKey: 'bob', recipientKey: 'beatrice' },
+      { giver: 'Beatrice 2', recipient: 'Carol', giverKey: 'beatrice 2', recipientKey: 'carol' },
+      { giver: 'Œ', recipient: 'Oda', giverKey: 'œ', recipientKey: 'oda' },
+      { giver: 'oe', recipient: 'Xavier', giverKey: 'oe', recipientKey: 'xavier' },
+      { giver: 'Béatrice', recipient: 'Beatrice', giverKey: 'beatrice', recipientKey: 'beatrice' },
+    ];
+    http.expectOne('/api/draw/2021').flush({
+      data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments },
+    });
+    harness.detectChanges();
+    const rows = () => Array.from(harness.routeNativeElement!.querySelectorAll('tr.mat-mdc-row'));
+    expect(rows()).toHaveLength(6);
+    expect(rows().filter((row) => row.classList.contains('giver') || row.classList.contains('recipient'))).toHaveLength(0);
+    pendingSession.flush({ data: {
+      authenticated: true, isAdmin: false, login: 'beatrice', email: 'b@example.com',
+      participant: 'Béatrice', participantKey: 'beatrice',
+    } });
+    harness.detectChanges();
+    expect(rows().map((row) => row.classList.contains('giver'))).toEqual([true, false, false, false, false, true]);
+    expect(rows().map((row) => row.classList.contains('recipient'))).toEqual([false, true, false, false, false, true]);
+    expect(Array.from(rows()[0].querySelectorAll('strong')).map((element) => element.textContent))
+      .toEqual(['BÉATRICE', 'Alpha offre un cadeau à Beta']);
+    expect(rows()[0].textContent).toContain('Vous offrez');
+    expect(rows()[0].textContent).not.toContain('Vous recevez');
+    expect(rows()[1].textContent).toContain('Vous recevez');
+    expect(rows()[1].textContent).not.toContain('Vous offrez');
+    expect(rows()[2].textContent).not.toContain('Vous offrez');
+    expect(rows()[2].textContent).not.toContain('Vous recevez');
+    expect(rows()[5].textContent).toContain('Vous offrez');
+    expect(rows()[5].textContent).toContain('Vous recevez');
+    const cell = rows()[0].querySelector('td')!;
+    expect(parseFloat(getComputedStyle(cell).fontSize)).toBeGreaterThanOrEqual(17.6);
+    expect(getComputedStyle(cell).backgroundColor).toBe('rgb(228, 240, 226)');
+    expect(getComputedStyle(rows()[1].querySelector('td')!).backgroundColor).toBe('rgb(255, 240, 214)');
+    vi.stubGlobal('innerWidth', 320);
+    expect(parseFloat(getComputedStyle(cell).fontSize)).toBeGreaterThanOrEqual(17.6);
+    expect(getComputedStyle(cell).overflowWrap).toBe('anywhere');
+
+    session.load().subscribe();
+    http.expectOne('/api/session').flush({ data: {
+      authenticated: true, isAdmin: false, login: 'œ', email: 'o@example.com',
+      participant: 'Œ', participantKey: 'œ',
+    } });
+    harness.detectChanges();
+    expect(rows().map((row) => row.classList.contains('giver'))).toEqual([false, false, false, true, false, false]);
+    expect(rows().map((row) => row.classList.contains('recipient'))).toEqual([false, false, false, false, false, false]);
+    session.clear();
+    harness.detectChanges();
+    expect(rows().filter((row) => row.classList.contains('giver') || row.classList.contains('recipient'))).toHaveLength(0);
+  });
+
+  it('ne montre pas le lien d’administration à un utilisateur non administrateur', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    harness.detectChanges();
+    expect(harness.routeNativeElement?.querySelector('a[href="/administration"]')).toBeNull();
+  });
+
+  it('modifie le compte depuis le menu utilisateur', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    harness.detectChanges();
+    const trigger = harness.routeNativeElement!.querySelector<HTMLButtonElement>('[aria-label="Menu utilisateur"]')!;
+    expect(trigger.textContent).toContain('alice');
+    trigger.click();
+    harness.detectChanges();
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
+      .find((item) => item.textContent?.includes('Modifier'))!.click();
+    harness.detectChanges();
+    const root = harness.routeNativeElement as HTMLElement;
+    const email = root.querySelector<HTMLInputElement>('input[formControlName=email]')!;
+    expect(email.value).toBe('alice@example.com');
+    email.value = 'new@example.com';
+    email.dispatchEvent(new Event('input'));
+    const password = root.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    password.value = 'secret';
+    password.dispatchEvent(new Event('input'));
+    root.querySelector('form')!.dispatchEvent(new Event('submit'));
+    const update = http.expectOne('/api/account');
+    expect(update.request.body).toEqual({ currentPassword: 'secret', email: 'new@example.com' });
+    update.flush({ data: { updated: true } });
+    http.expectOne('/api/session').flush({
+      data: { authenticated: true, isAdmin: false, login: 'alice', email: 'new@example.com', participant: null, participantKey: null },
+    });
+    harness.detectChanges();
+    expect(root.textContent).toContain('Votre compte a été modifié');
+    expect(root.querySelector('form')).toBeNull();
+  });
+
+  it('affiche une erreur si le mot de passe actuel est incorrect', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    harness.detectChanges();
+    harness.routeNativeElement!.querySelector<HTMLButtonElement>('[aria-label="Menu utilisateur"]')!.click();
+    harness.detectChanges();
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
+      .find((item) => item.textContent?.includes('Modifier'))!.click();
+    harness.detectChanges();
+    const root = harness.routeNativeElement as HTMLElement;
+    const password = root.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    password.value = 'wrong';
+    password.dispatchEvent(new Event('input'));
+    const newPassword = root.querySelector<HTMLInputElement>('input[formControlName=newPassword]')!;
+    newPassword.value = 'new';
+    newPassword.dispatchEvent(new Event('input'));
+    root.querySelector('form')!.dispatchEvent(new Event('submit'));
+    http.expectOne('/api/account').flush(
+      { error: { code: 'invalid_current_password' } }, { status: 403, statusText: 'Forbidden' },
+    );
+    harness.detectChanges();
+    expect(root.textContent).toContain('Le mot de passe actuel est incorrect');
+    expect(TestBed.inject(SessionService).session()?.login).toBe('alice');
   });
 
   it('signale une année choisie absente sans chercher une autre année', async () => {
@@ -67,7 +188,7 @@ describe('Consultation des tirages', () => {
   it('propose les années depuis 2021 sans année future', async () => {
     await harness.navigateByUrl('/tirages/2021', Draws);
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: [] },
+      data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] },
     });
     harness.detectChanges();
     const menuButton = Array.from(harness.routeNativeElement!.querySelectorAll('button'))
@@ -98,7 +219,7 @@ describe('Consultation des tirages', () => {
     await harness.navigateByUrl('/tirages/2021', Draws);
     expect(pending.cancelled).toBe(true);
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+      data: { year: 2021, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'], assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
     });
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Tirage 2021');
@@ -108,13 +229,13 @@ describe('Consultation des tirages', () => {
   it('relance les confettis uniquement après le chargement de chaque tirage', async () => {
     await harness.navigateByUrl('/tirages/2021', Draws);
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+      data: { year: 2021, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'], assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
     });
     expect(confettiMock).toHaveBeenCalledTimes(1);
     await harness.navigateByUrl('/tirages/2022', Draws);
     expect(confettiMock).toHaveBeenCalledTimes(1);
     http.expectOne('/api/draw/2022').flush({
-      data: { year: 2022, assignmentsByGiver: {}, lines: ['Bob offre un cadeau à Alice'] },
+      data: { year: 2022, assignmentsByGiver: { Bob: 'Alice' }, lines: ['Bob offre un cadeau à Alice'], assignments: [{ giver: 'Bob', recipient: 'Alice', giverKey: 'bob', recipientKey: 'alice' }] },
     });
     expect(confettiMock).toHaveBeenCalledTimes(2);
     harness.detectChanges();
@@ -130,7 +251,7 @@ describe('Consultation des tirages', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => preference));
     await harness.navigateByUrl('/tirages/2021', Draws);
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+      data: { year: 2021, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'], assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
     });
     harness.detectChanges();
     expect(harness.routeNativeElement?.textContent).toContain('Alice offre un cadeau à Bob');
@@ -149,7 +270,7 @@ describe('Consultation des tirages', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => preference));
     await harness.navigateByUrl('/tirages/2021', Draws);
     http.expectOne('/api/draw/2021').flush({
-      data: { year: 2021, assignmentsByGiver: {}, lines: ['Alice offre un cadeau à Bob'] },
+      data: { year: 2021, assignmentsByGiver: { Alice: 'Bob' }, lines: ['Alice offre un cadeau à Bob'], assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
     });
     expect(confettiMock).toHaveBeenCalledTimes(1);
     confettiMock.reset.mockClear();
@@ -157,7 +278,7 @@ describe('Consultation des tirages', () => {
     expect(confettiMock.reset).toHaveBeenCalledTimes(1);
     await harness.navigateByUrl('/tirages/2022', Draws);
     http.expectOne('/api/draw/2022').flush({
-      data: { year: 2022, assignmentsByGiver: {}, lines: ['Bob offre un cadeau à Alice'] },
+      data: { year: 2022, assignmentsByGiver: { Bob: 'Alice' }, lines: ['Bob offre un cadeau à Alice'], assignments: [{ giver: 'Bob', recipient: 'Alice', giverKey: 'bob', recipientKey: 'alice' }] },
     });
     expect(confettiMock).toHaveBeenCalledTimes(1);
     await harness.navigateByUrl('/connexion');
