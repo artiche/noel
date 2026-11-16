@@ -23,19 +23,14 @@ notamment les secrets. Ce fichier surcharge `config.php`.
 
 ### Deploiement dans un sous-dossier (`/noel/api`)
 
-Configurer la cle `base_path` dans `data/config.php` avec le prefixe de l'API:
+Configurer la cle `base_path` dans `data/config.local.php` avec le prefixe de l'API:
 
 - `'base_path' => '/noel/api'`
 
-Sur un hebergement Apache (ex: IONOS), activez le routage dans le `.htaccess` du dossier web de l'API:
-
-```apache
-RewriteEngine On
-RewriteBase /noel/api/
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [QSA,L]
-```
+Sur Apache, le `.htaccess` fourni dans `src_php/` achemine les requetes vers
+`public/index.php` et protege les dossiers internes. Le workflow IONOS genere
+automatiquement cette configuration locale ; voir les variables et les
+precautions de deploiement dans [le README Angular](../src_angular/README.md#déploiement-github-actions-vers-ionos).
 
 Avec cette valeur:
 - requete `GET /noel/api/health` route vers l'endpoint `/health`
@@ -106,9 +101,7 @@ et ecriture par PHP, hors du repertoire public. Par defaut il s'agit de
 serveur, interdire explicitement tout acces HTTP direct a ce repertoire.
 Les documents et leurs images sont stockes ensemble ; ce repertoire ne doit
 pas etre publie ni versionne et doit etre inclus dans les sauvegardes privees.
-Configurer aussi `wishlist_frontend_url` dans `config.local.php` avec l'URL
-HTTPS de base de l'interface, par exemple `https://example.com/noel`, sans
-query ni fragment. La configuration SMTP utilisee est celle des resets.
+Le lien de l'email utilise `frontend_url` (HTTPS, sans query ni fragment). La configuration SMTP utilisee est celle des resets.
 
 Les routes requierent une session valide dont le login correspond a un
 participant actuel, sans tenir compte de la casse ni des accents :
@@ -323,7 +316,7 @@ identifiant continuent a fonctionner.
 ## Configuration reset password / SMTP
 
 - `password_reset_ttl_seconds` (obligatoire, valeur recommandee `3600`)
-- `password_reset_confirm_base_url` (obligatoire)
+- `frontend_url` (obligatoire, URL de base publique, ex. `https://example.com/noel`; sert a forger les liens de reset et de wishlist)
 - `login_redirect_url` (obligatoire, valeur recommandee `/login`)
 - `users_file_path` (obligatoire, valeur recommandee `data/users.json`)
 - `password_resets_file_path` (obligatoire, valeur recommandee `data/passwordResets.json`)
@@ -347,7 +340,7 @@ return [
     'jwt_cookie_name' => 'noel_session',
     'jwt_ttl_seconds' => 1800,
     'password_reset_ttl_seconds' => 3600,
-    'password_reset_confirm_base_url' => 'https://example.com/api/password/confirm',
+    'frontend_url' => 'https://example.com',
     'login_redirect_url' => '/login',
     'users_file_path' => 'data/users.json',
     'password_resets_file_path' => 'data/passwordResets.json',
@@ -390,7 +383,7 @@ declare(strict_types=1);
 
 return [
     'jwt_secret' => 'SECRET_REEL',
-    'password_reset_confirm_base_url' => 'https://votre-domaine/noel/api/password/confirm',
+    'frontend_url' => 'https://votre-domaine/noel',
     'smtp_username' => 'utilisateur-smtp',
     'smtp_password' => 'mot-de-passe-smtp',
     'smtp_from_email' => 'no-reply@votre-domaine',

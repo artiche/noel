@@ -1,0 +1,131 @@
+name: Déploiement IONOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environnement cible
+        type: choice
+        options: [dev, prod]
+        required: true
+      deploy_api:
+        description: Déployer l'API PHP
+        type: boolean
+        default: true
+      deploy_ui:
+        description: Construire et déployer Angular
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.select.outputs.api }}
+      ui: ${{ steps.select.outputs.ui }}
+      environment: ${{ steps.select.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'push'
+        id: filter
+        with:
+          filters: |
+            api:
+              - 'src_php/**'
+              - '.github/workflows/deploy.yml'
+              - '.github/scripts/**'
+            ui:
+              - 'src_angular/**'
+              - '.github/workflows/deploy.yml'
+              - '.github/scripts/**'
+      - name: Sélectionner les composants et l'environnement
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_ENV: ${{ inputs.environment }}
+          SELECT_API: ${{ inputs.deploy_api }}
+          SELECT_UI: ${{ inputs.deploy_ui }}
+          CHANGED_API: ${{ steps.filter.outputs.api }}
+          CHANGED_UI: ${{ steps.filter.outputs.ui }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "environment=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+            echo "api=$SELECT_API" >> "$GITHUB_OUTPUT"
+            echo "ui=$SELECT_UI" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=dev" >> "$GITHUB_OUTPUT"
+            echo "api=$CHANGED_API" >> "$GITHUB_OUTPUT"
+            echo "ui=$CHANGED_UI" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api == 'true' || needs.detect-changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.detect-changes.outputs.environment }}
+    concurrency:
+      group: ionos-${{ needs.detect-changes.outputs.environment }}
+      cancel-in-progress: false
+    env:
+      DEPLOY_API: ${{ needs.detect-changes.outputs.api }}
+      DEPLOY_UI: ${{ needs.detect-changes.outputs.ui }}
+      SFTP_HOST: ${{ secrets.SFTP_HOST }}
+      SFTP_USER: ${{ secrets.SFTP_USER }}
+      SSHPASS: ${{ secrets.SFTP_PWD }}
+      SFTP_HOST_KEY: ${{ secrets.SFTP_HOST_KEY }}
+      SFTP_REMOTE_ROOT: ${{ secrets.SFTP_REMOTE_ROOT }}
+      SITE_URL: ${{ secrets.SITE_URL }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
+      SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: intl, mbstring
+          tools: composer:v2
+          coverage: none
+      - name: Tester la génération de la configuration
+        run: php .github/scripts/test-prepare-deploy.php
+      - name: Valider les paramètres et préparer la configuration
+        id: config
+        run: php .github/scripts/prepare-deploy.php
+      - uses: actions/setup-node@v4
+        if: env.DEPLOY_UI == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src_angular/package-lock.json
+      - name: Construire Angular
+        if: env.DEPLOY_UI == 'true'
+        working-directory: src_angular
+        env:
+          BASE_HREF: ${{ steps.config.outputs.base_href }}
+        run: |
+          npm ci
+          npm run build -- --configuration production --base-href "$BASE_HREF"
+      - name: Préparer l'API
+        if: env.DEPLOY_API == 'true'
+        run: |
+          composer install --working-dir=src_php --no-dev --prefer-dist --no-interaction --optimize-autoloader
+          mkdir -p "$RUNNER_TEMP/noel-api" "$RUNNER_TEMP/noel-seed"
+          cp src_php/.htaccess "$RUNNER_TEMP/noel-api/"
+          cp -R src_php/public src_php/src src_php/vendor "$RUNNER_TEMP/noel-api/"
+          cp src_php/data/constraints.json src_php/data/history.json src_php/data/users.json src_php/data/passwordResets.json "$RUNNER_TEMP/noel-seed/"
+      - name: Installer les outils SFTP
+        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client sshpass
+      - name: Déployer par SFTP
+        run: bash .github/scripts/deploy-sftp.sh

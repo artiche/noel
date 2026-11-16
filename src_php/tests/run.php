@@ -63,7 +63,7 @@ foreach (['', str_repeat(' ', 40), 'CHANGE_ME_JWT_SECRET', 'CHANGE_ME_WITH_A_LON
 $jwtService = new JwtService('test-only-secret-not-for-production-123456789');
 $authService = new AuthService($jwtService);
 $passwordResetNotifier = new FakePasswordResetNotifier();
-$passwordResetService = new PasswordResetService($jwtService, $passwordResetNotifier, 3600, 'https://example.test/password/confirm');
+$passwordResetService = new PasswordResetService($jwtService, $passwordResetNotifier, 3600, 'https://example.test');
 $app = new App($repo, $service, $authService, $passwordResetService, 'noel_session', 1800, '/');
 
 $health = $app->handle('GET', '/health', [], null, []);

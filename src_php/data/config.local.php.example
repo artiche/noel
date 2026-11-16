@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 return [
     'jwt_secret' => 'CHANGE_ME_JWT_SECRET',
-    'password_reset_confirm_base_url' => 'https://your-domain.example/noel/api/password/confirm',
-    'wishlist_frontend_url' => 'https://your-domain.example/noel',
+    'frontend_url' => 'https://your-domain.example/noel',
     'smtp_username' => 'CHANGE_ME_SMTP_USERNAME',
     'smtp_password' => 'CHANGE_ME_SMTP_PASSWORD',
     'smtp_from_email' => 'CHANGE_ME_FROM_EMAIL@example.com',

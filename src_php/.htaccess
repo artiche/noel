@@ -1,13 +1,11 @@
-# Configure these values for your environment.
-SetEnv JWT_SECRET CHANGE_ME_WITH_A_LONG_RANDOM_SECRET
 # SetEnv BASE_PATH /noel/api
 
 RewriteEngine On
 
 # Never expose internal folders or metadata files.
-RewriteRule ^(?:src|tests|data)/ - [F,L]
+RewriteRule ^(?:src|tests|data|vendor)/ - [F,L]
 RewriteRule ^(?:composer\.(?:json|lock)|README\.md)$ - [F,L,NC]
 
-# Route all API requests to the front controller.
-RewriteCond %{REQUEST_URI} !^/public/
+# Route all API requests to the front controller, including in a subdirectory.
+RewriteRule ^public/ - [L]
 RewriteRule ^ public/index.php [QSA,L]

@@ -11,13 +11,12 @@ return [
     'jwt_ttl_seconds' => 1800,
 
     'password_reset_ttl_seconds' => 3600,
-    'password_reset_confirm_base_url' => 'https://example.com/api/password/confirm',
+    'frontend_url' => 'https://example.com',
     'login_redirect_url' => '/login',
 
     'users_file_path' => 'data/users.json',
     'password_resets_file_path' => 'data/passwordResets.json',
     'wishlist_directory' => 'data/wishlists',
-    'wishlist_frontend_url' => '',
 
     'smtp_host' => 'smtp.example.com',
     'smtp_port' => 25,

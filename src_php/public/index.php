@@ -39,13 +39,12 @@ try {
     $smtpFromName = readRequiredConfigString($config, 'smtp_from_name');
     $usersFilePath = readRequiredConfigString($config, 'users_file_path');
     $passwordResetsFilePath = readRequiredConfigString($config, 'password_resets_file_path');
-    $passwordResetConfirmationBaseUrl = readRequiredConfigString($config, 'password_reset_confirm_base_url');
     $wishlistDirectory = readRequiredConfigString($config, 'wishlist_directory');
-    $wishlistFrontendUrl = readOptionalConfigString($config, 'wishlist_frontend_url', '');
+    $frontendUrl = readRequiredConfigString($config, 'frontend_url');
 
     $jwtService = new JwtService($jwtSecret);
     $authService = new AuthService($jwtService);
-    $passwordResetNotifier = new SmtpPasswordResetNotifier(
+    $mailNotifier = new SmtpPasswordResetNotifier(
         $smtpHost,
         $smtpPort,
         $smtpUsername,
@@ -53,7 +52,7 @@ try {
         $smtpFromEmail,
         $smtpFromName
     );
-    $passwordResetService = new PasswordResetService($jwtService, $passwordResetNotifier, $passwordResetTtlSeconds, $passwordResetConfirmationBaseUrl);
+    $passwordResetService = new PasswordResetService($jwtService, $mailNotifier, $passwordResetTtlSeconds, $frontendUrl);
     $app = new App(
         $repository,
         $service,
@@ -68,8 +67,8 @@ try {
         'data/constraints.json',
         'data/history.json',
         $wishlistDirectory,
-        $passwordResetNotifier,
-        $wishlistFrontendUrl
+        $mailNotifier,
+        $frontendUrl
     );
 
     $rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);

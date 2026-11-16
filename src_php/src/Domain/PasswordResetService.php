@@ -12,7 +12,7 @@ final class PasswordResetService
         private readonly JwtService $jwtService,
         private readonly PasswordResetNotifier $notifier,
         private readonly int $ttlSeconds,
-        private readonly string $confirmationBaseUrl
+        private readonly string $frontendUrl
     ) {
     }
 
@@ -183,8 +183,7 @@ final class PasswordResetService
 
     private function buildConfirmationUrl(string $token): string
     {
-        $separator = str_contains($this->confirmationBaseUrl, '?') ? '&' : '?';
-        return $this->confirmationBaseUrl . $separator . 'token=' . rawurlencode($token);
+        return rtrim($this->frontendUrl, '/') . '/api/password/confirm?token=' . rawurlencode($token);
     }
 
     private function generateTemporaryPassword(): string

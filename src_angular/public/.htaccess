@@ -1,0 +1,7 @@
+RewriteEngine On
+
+# L'API est traitée par son propre .htaccess, jamais par le routeur Angular.
+RewriteRule ^api(?:/|$) - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

@@ -31,6 +31,81 @@ L'interface et l'API doivent partager la même origine HTTPS. L'URL d'API est `a
 
 La déconnexion expire le cookie du navigateur ; elle ne révoque pas un jeton copié. Voir la documentation de `../src_php/README.md` pour le fonctionnement et la configuration de l'API.
 
+### Déploiement GitHub Actions vers IONOS
+
+Le workflow [deploy.yml](../.github/workflows/deploy.yml) déploie les composants
+modifiés sur l'environnement `dev` lors d'un push sur `main`. Dans **Actions >
+Déploiement IONOS > Run workflow**, sélectionner `dev` ou `prod` et les
+composants à déployer. Utiliser ce lancement manuel pour un premier déploiement
+complet ou après modification des variables et secrets : leur modification ne
+déclenche pas le workflow. Les déploiements vers un même environnement sont
+sérialisés. Ne pas configurer `dev` et `prod` sur le même répertoire distant.
+
+Créer les deux environnements dans **Settings > Environments**, puis renseigner
+séparément les valeurs suivantes dans les secrets ou variables de chaque
+environnement. On peut protéger `prod` par une validation GitHub.
+
+| Secret GitHub | Contenu |
+| --- | --- |
+| `SFTP_HOST` | Nom d'hôte SFTP IONOS, sans protocole ni port ; port SSH 22. |
+| `SFTP_USER` | Identifiant SFTP. |
+| `SFTP_PWD` | Mot de passe SFTP. |
+| `JWT_SECRET` | Secret aléatoire distinct par environnement, d'au moins 32 octets ; ne pas le modifier à chaque déploiement. |
+| `SMTP_USERNAME` | Identifiant SMTP. |
+| `SMTP_PASSWORD` | Mot de passe SMTP. |
+
+| Variable GitHub | Contenu |
+| --- | --- |
+| `SFTP_HOST_KEY` | Ligne complète au format `known_hosts`, par exemple `sftp.example.com ssh-ed25519 AAAA...` ; le nom doit correspondre à `SFTP_HOST`. |
+| `SFTP_REMOTE_ROOT` | Chemin absolu SFTP du répertoire **dédié à l'application**, par exemple `/sites/noel` ou `/` si le compte est enfermé dans ce répertoire. |
+| `SITE_URL` | URL HTTPS publique de l'interface, par exemple `https://example.com` ou `https://example.com/noel`, sans requête ni fragment. |
+| `SMTP_HOST` | Serveur SMTP, par exemple `smtp.ionos.fr`. |
+| `SMTP_PORT` | Port SMTP, par exemple `465`. |
+| `SMTP_FROM_EMAIL` | Adresse d'expédition autorisée par le serveur SMTP. |
+| `SMTP_FROM_NAME` | Nom d'expéditeur, par exemple `Noel API`. |
+
+Les paramètres JWT et SMTP sont requis pour déployer l'API ; un déploiement
+du seul frontend nécessite seulement les paramètres SFTP et `SITE_URL`.
+Les chemins ne doivent contenir ni espaces, ni segments `.` ou `..` ; le chemin
+public ne doit pas contenir de caractères encodés. `SFTP_REMOTE_ROOT` désigne
+le dossier côté SFTP, et non le chemin de l'URL : il doit correspondre au
+document root IONOS ou au sous-dossier servi à l'URL `SITE_URL`. Vérifier
+l'empreinte de la clé SSH auprès d'IONOS par un canal fiable avant d'ajouter la
+ligne `known_hosts` ; ne pas accepter automatiquement une clé inconnue. Le
+workflow refuse les clés d'hôte inconnues ou modifiées.
+
+Le workflow construit Angular avec Node 24, installe les dépendances Composer
+de production, puis génère `api/data/config.local.php` sur le runner depuis ces
+valeurs. Il configure automatiquement le chemin `/api`, les liens de mail et
+la redirection vers `/connexion`, y compris pour un sous-dossier. Le fichier
+local de développement n'est jamais copié. Les autres paramètres restent
+définis dans le `config.php` versionné.
+
+Au premier déploiement de l'API, les fichiers `constraints.json`,
+`history.json`, `users.json` et `passwordResets.json` sont copiés du dépôt
+**seulement s'ils sont absents**. Vérifier leur contenu et le compte
+administrateur initial avant de lancer le workflow : ils ne constituent pas
+nécessairement des données vierges. Les JSON existants, verrous, wishlists et
+autres données de `api/data/` sont conservés. Le code de l'API et les fichiers
+du frontend obsolètes sont supprimés de leurs répertoires respectifs ; aucun
+fichier étranger à l'application ne doit se trouver dans le répertoire dédié.
+La synchronisation du frontend exclut `api/`.
+
+Aucune sauvegarde automatique n'est effectuée. Prévoir des sauvegardes privées,
+testées et protégées des données et de la configuration avant déploiement ; le
+transfert n'est pas atomique. PHP doit pouvoir lire la configuration et écrire
+dans `api/data/` et ses sous-dossiers. IONOS doit fournir PHP 8.2 ou ultérieur,
+les extensions `intl` et `mbstring`, Apache avec `mod_rewrite`, les `.htaccess`
+actifs et HTTPS. Pour les wishlists, consulter également les limites de requête
+et de mémoire dans la documentation PHP.
+
+Après déploiement, vérifier `https://example.com/noel/api/health`, l'accès
+direct à une route Angular comme `/noel/connexion`, l'authentification et
+l'envoi de mail. Vérifier aussi que l'accès HTTP direct à
+`/noel/api/data/config.local.php` et aux données est refusé. Remplacer
+`/noel` par le chemin configuré, ou le supprimer pour une installation à la
+racine.
+
 Le rôle `isAdmin` est récupéré via `GET /api/session` après connexion et lors
 d'une ouverture directe ; le JWT reste dans son cookie HttpOnly. L'état de
 session est effacé à la déconnexion ou à l'expiration. Les administrateurs
