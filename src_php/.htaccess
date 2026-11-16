@@ -1,5 +1,3 @@
-# SetEnv BASE_PATH /noel/api
-
 RewriteEngine On
 
 # Never expose internal folders or metadata files.

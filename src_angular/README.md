@@ -77,7 +77,9 @@ workflow refuse les clés d'hôte inconnues ou modifiées.
 Le workflow construit Angular avec Node 24, installe les dépendances Composer
 de production, puis génère `api/data/config.local.php` sur le runner depuis ces
 valeurs. Il configure automatiquement le chemin `/api`, les liens de mail et
-la redirection vers `/connexion`, y compris pour un sous-dossier. Le fichier
+la redirection vers `/connexion`, y compris pour un sous-dossier. Il ajoute
+aussi aux `.htaccess` du frontend et de l'API leurs `RewriteBase` respectifs,
+derives du chemin public de `SITE_URL`. Le fichier
 local de développement n'est jamais copié. Les autres paramètres restent
 définis dans le `config.php` versionné.
 

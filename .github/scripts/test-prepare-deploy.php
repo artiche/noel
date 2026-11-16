@@ -49,6 +49,18 @@ function check(bool $condition, string $message): void
     }
 }
 
+function checkRewriteBase(string $directory, string $uiBase, string $apiBase): void
+{
+    foreach ([
+        ['src_angular/public/.htaccess', 'noel-ui.htaccess', $uiBase],
+        ['src_php/.htaccess', 'noel-api.htaccess', $apiBase],
+    ] as [$source, $destination, $base]) {
+        $template = file_get_contents(__DIR__ . '/../../' . $source);
+        $expected = str_replace('RewriteEngine On', "RewriteEngine On\nRewriteBase {$base}", $template);
+        check(file_get_contents($directory . '/' . $destination) === $expected, 'Incorrect rewrite configuration: ' . $destination);
+    }
+}
+
 try {
     [$status, $stdout, $stderr] = runPreparation($env);
     check($status === 0, 'Subdirectory configuration failed: ' . $stderr);
@@ -60,6 +72,7 @@ try {
     check($config['jwt_secret'] === $env['JWT_SECRET'] && $config['smtp_password'] === $env['SMTP_PASSWORD'] &&
         $config['smtp_username'] === $env['SMTP_USERNAME'], 'Configuration values were not escaped correctly');
     check(file_get_contents($directory . '/output') === "base_href=/noel/\n", 'Incorrect Angular base href');
+    checkRewriteBase($directory, '/noel/', '/noel/api/');
 
     unlink($directory . '/output');
     [$status, , $stderr] = runPreparation(array_replace($env, ['SITE_URL' => 'https://example.test/']));
@@ -67,6 +80,7 @@ try {
     $config = require $directory . '/noel-config.local.php';
     check($config['base_path'] === '/api' && $config['login_redirect_url'] === '/connexion', 'Incorrect root paths');
     check(file_get_contents($directory . '/output') === "base_href=/\n", 'Incorrect root base href');
+    checkRewriteBase($directory, '/', '/api/');
 
     foreach ([
         ['SITE_URL' => 'https://example.test/noel?x=1'],
@@ -87,7 +101,7 @@ try {
     check($status === 0, 'Frontend-only deployment requires API secrets: ' . $stderr);
     echo "Deployment configuration tests passed.\n";
 } finally {
-    foreach (['output', 'noel-config.local.php'] as $name) {
+    foreach (['output', 'noel-config.local.php', 'noel-ui.htaccess', 'noel-api.htaccess'] as $name) {
         if (is_file($directory . '/' . $name)) {
             unlink($directory . '/' . $name);
         }

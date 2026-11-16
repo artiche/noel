@@ -69,6 +69,21 @@ try {
         }
     }
 
+    $runnerTemp = requiredEnv('RUNNER_TEMP');
+    foreach ([
+        ['src_angular/public/.htaccess', 'noel-ui.htaccess', $path . '/'],
+        ['src_php/.htaccess', 'noel-api.htaccess', $path . '/api/'],
+    ] as [$source, $destination, $rewriteBase]) {
+        $template = file_get_contents(__DIR__ . '/../../' . $source);
+        if ($template === false || substr_count($template, 'RewriteEngine On') !== 1) {
+            throw new RuntimeException("Impossible de préparer le fichier {$source}.");
+        }
+        $contents = str_replace('RewriteEngine On', "RewriteEngine On\nRewriteBase {$rewriteBase}", $template);
+        if (file_put_contents($runnerTemp . '/' . $destination, $contents, LOCK_EX) === false) {
+            throw new RuntimeException("Impossible de créer le fichier {$destination}.");
+        }
+    }
+
     if (file_put_contents(requiredEnv('GITHUB_OUTPUT'), "base_href={$path}/\n", FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('Impossible de transmettre le chemin public.');
     }

@@ -117,12 +117,13 @@ jobs:
         run: |
           npm ci
           npm run build -- --configuration production --base-href "$BASE_HREF"
+          cp "$RUNNER_TEMP/noel-ui.htaccess" dist/noel/browser/.htaccess
       - name: Préparer l'API
         if: env.DEPLOY_API == 'true'
         run: |
           composer install --working-dir=src_php --no-dev --prefer-dist --no-interaction --optimize-autoloader
           mkdir -p "$RUNNER_TEMP/noel-api" "$RUNNER_TEMP/noel-seed"
-          cp src_php/.htaccess "$RUNNER_TEMP/noel-api/"
+          cp "$RUNNER_TEMP/noel-api.htaccess" "$RUNNER_TEMP/noel-api/.htaccess"
           cp -R src_php/public src_php/src src_php/vendor "$RUNNER_TEMP/noel-api/"
           cp src_php/data/constraints.json src_php/data/history.json src_php/data/users.json src_php/data/passwordResets.json "$RUNNER_TEMP/noel-seed/"
       - name: Installer les outils SFTP
