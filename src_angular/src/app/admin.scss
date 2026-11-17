@@ -45,6 +45,11 @@ form {
   max-width: 36rem;
 }
 
+form.account-edit-dialog {
+  margin: 0;
+  padding: 1.5rem;
+}
+
 fieldset {
   display: grid;
   border: 1px solid #e6d9bd;

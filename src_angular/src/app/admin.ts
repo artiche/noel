@@ -1,10 +1,12 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, DestroyRef, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal, TemplateRef, ViewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatDialog, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -16,13 +18,16 @@ type DeleteChoice = { login?: string; name?: string };
 
 @Component({
   selector: 'app-admin',
-  imports: [ReactiveFormsModule, MatButtonModule, MatCardModule, MatCheckboxModule,
+  imports: [NgTemplateOutlet, ReactiveFormsModule, MatButtonModule, MatCardModule, MatCheckboxModule,
     MatFormFieldModule, MatInputModule, MatToolbarModule, RouterLink],
   templateUrl: './admin.html',
   styleUrl: './admin.scss',
 })
 export class Admin {
+  @ViewChild('accountTemplate', { static: true }) private accountTemplate!: TemplateRef<unknown>;
   private readonly api = inject(Api);
+  private readonly dialog = inject(MatDialog);
+  private accountDialog?: MatDialogRef<unknown>;
   private readonly session = inject(SessionService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly router = inject(Router);
@@ -51,6 +56,7 @@ export class Admin {
   });
 
   constructor() {
+    this.destroyRef.onDestroy(() => this.accountDialog?.close());
     this.session.load().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (session) => {
         if (session.isAdmin) this.loadData();
@@ -91,6 +97,24 @@ export class Admin {
     this.accountForm.reset({ login: user.login, email: user.email, isAdmin: user.isAdmin, password: '', sendReset: false });
     this.linkedParticipant.set(null);
     this.accountMode.set('edit');
+    const dialog = this.dialog.open(this.accountTemplate, {
+      ariaLabel: 'Modifier le compte', ariaModal: true, width: '36rem', maxWidth: '95vw',
+    });
+    this.accountDialog = dialog;
+    dialog.afterClosed().pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      if (this.accountDialog !== dialog) return;
+      this.accountDialog = undefined;
+      if (this.accountMode() === 'edit') this.accountMode.set(null);
+      this.accountForm.controls.password.reset();
+    });
+  }
+
+  protected cancelAccount(): void {
+    if (this.accountMode() === 'edit') {
+      this.accountDialog?.close();
+    } else {
+      this.accountMode.set(null);
+    }
   }
 
   protected saveAccount(): void {
@@ -102,6 +126,7 @@ export class Admin {
     if (mode === null) return;
     this.clearFeedback();
     this.busy.set(true);
+    if (this.accountDialog) this.accountDialog.disableClose = true;
     const { login, email, isAdmin, password, sendReset } = this.accountForm.getRawValue();
     const participant = this.linkedParticipant();
     const request = mode === 'create'
@@ -111,6 +136,7 @@ export class Admin {
       next: () => {
         this.accountForm.controls.password.reset();
         this.accountMode.set(null);
+        this.accountDialog?.close();
         if (mode === 'create' && sendReset) {
           this.api.adminReset(login).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
             next: () => this.finish('Compte créé et email de réinitialisation envoyé.'),
@@ -136,7 +162,10 @@ export class Admin {
           this.finish(mode === 'create' ? 'Compte créé.' : 'Compte modifié.');
         }
       },
-      error: (error: unknown) => this.fail(error),
+      error: (error: unknown) => {
+        if (this.accountDialog) this.accountDialog.disableClose = false;
+        this.fail(error);
+      },
     });
   }
 

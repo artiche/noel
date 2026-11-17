@@ -292,8 +292,10 @@ final class App
                         return $service->save($session['sub'], $jsonBody);
                     }
                     if ($method === 'POST' && $path === '/wishlist/notify') {
-                        $service->notifyGiver($session['sub']);
-                        return ['sent' => true];
+                        $expectedGiver = $jsonBody !== null && array_key_exists('expectedGiver', $jsonBody)
+                            ? $this->readRequiredString($jsonBody, 'expectedGiver') : null;
+                        $giver = $service->notifyGiver($session['sub'], $expectedGiver);
+                        return ['sent' => true, 'giver' => $giver];
                     }
                     throw new ApiException(404, 'not_found', 'Route not found');
                 });

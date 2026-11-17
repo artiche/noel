@@ -8,7 +8,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import Quill, { Delta } from 'quill';
 import { catchError, EMPTY, switchMap } from 'rxjs';
-import { Api, Wishlist as WishlistData } from './api';
+import { Api, InvalidNotificationResponseError, Wishlist as WishlistData } from './api';
 import { SessionService } from './session';
 
 @Component({
@@ -30,9 +30,11 @@ export class Wishlist implements AfterViewInit {
   private savedContents = '';
   private revision = '';
   protected readonly own = signal<WishlistData | null>(null);
+  protected readonly recipientTarget = signal(this.route.snapshot.queryParamMap.get('target') ?? '');
   protected readonly recipientName = signal('');
   protected readonly recipientYear = signal<number | null>(null);
   protected readonly recipientEmpty = signal(false);
+  protected readonly giverChanged = signal(false);
   protected readonly loading = signal(true);
   protected readonly recipientLoading = signal(false);
   protected readonly busy = signal(false);
@@ -103,6 +105,7 @@ export class Wishlist implements AfterViewInit {
     this.route.queryParamMap.pipe(
       switchMap((params) => {
         const target = params.get('target');
+        this.recipientTarget.set(target ?? '');
         this.recipientError.set('');
         this.recipientName.set('');
         this.recipientYear.set(null);
@@ -158,18 +161,29 @@ export class Wishlist implements AfterViewInit {
   }
 
   protected notify(): void {
-    if (this.busy() || this.dirty()) return;
+    const giver = this.own()?.giver;
+    if (this.busy() || this.dirty() || this.giverChanged() || !giver) return;
     this.busy.set(true);
     this.error.set('');
     this.message.set('');
-    this.api.notifyGiver().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: () => {
+    this.api.notifyGiver(giver.key).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (name) => {
         this.busy.set(false);
-        this.message.set('L’e-mail a été envoyé à votre donneur.');
+        this.message.set(`L’e-mail a été envoyé à ${name}.`);
       },
       error: (error: unknown) => {
         this.busy.set(false);
-        this.error.set(this.errorMessage(error));
+        if (error instanceof HttpErrorResponse && error.error?.error?.code === 'giver_changed') {
+          this.giverChanged.set(true);
+          return;
+        }
+        if (error instanceof InvalidNotificationResponseError) {
+          this.error.set('L’envoi a peut-être réussi, mais son destinataire n’a pas pu être confirmé. Vérifiez avant de réessayer.');
+        } else {
+          this.error.set(error instanceof HttpErrorResponse && error.error?.error?.code === 'giver_account_missing'
+            ? `${giver.name} ne dispose pas d’un compte avec une adresse e-mail utilisable.`
+            : this.errorMessage(error));
+        }
       },
     });
   }
@@ -219,8 +233,6 @@ export class Wishlist implements AfterViewInit {
       switch (error.error?.error?.code) {
         case 'wishlist_forbidden': case 'participant_required':
           return 'Cette wishlist n’est pas accessible pour le dernier tirage.';
-        case 'giver_account_missing':
-          return 'Votre donneur ne dispose pas d’un compte avec une adresse e-mail utilisable.';
         case 'draw_assignment_missing':
           return 'Aucune attribution ne vous concerne dans le dernier tirage.';
         case 'wishlist_changed':

@@ -8,7 +8,7 @@
   @if (loading()) {
     <p role="status">Chargement…</p>
   }
-  @if (error()) {
+  @if (error() && accountMode() !== 'edit') {
     <p class="error" role="alert">{{ error() }}</p>
   }
   @if (message()) {
@@ -39,37 +39,8 @@
             </div>
           </div>
         }
-        @if (accountMode()) {
-          <form [formGroup]="accountForm" (ngSubmit)="saveAccount()">
-            <h2>{{ accountMode() === 'create' ? 'Créer un compte' : 'Modifier le compte' }}</h2>
-            @if (linkedParticipant(); as linked) {
-              <p>Participant : {{ linked }}. L’identifiant doit correspondre à ce nom, sans tenir compte de la casse ni des accents.</p>
-            }
-            <mat-form-field appearance="outline">
-              <mat-label>Identifiant</mat-label>
-              <input matInput formControlName="login" [readonly]="accountMode() === 'edit'" required autocomplete="off">
-              <mat-error>L’identifiant est obligatoire.</mat-error>
-            </mat-form-field>
-            <mat-form-field appearance="outline">
-              <mat-label>Email</mat-label>
-              <input matInput type="email" formControlName="email" required autocomplete="off">
-              <mat-error>Renseignez un email valide.</mat-error>
-            </mat-form-field>
-            <mat-checkbox formControlName="isAdmin">Administrateur</mat-checkbox>
-            @if (accountMode() === 'edit') {
-              <mat-form-field appearance="outline">
-                <mat-label>Nouveau mot de passe (facultatif)</mat-label>
-                <input matInput type="password" formControlName="password" autocomplete="new-password">
-              </mat-form-field>
-            } @else {
-              <p>Un mot de passe aléatoire non communiqué est généré. L’utilisateur peut obtenir un mot de passe par réinitialisation.</p>
-              <mat-checkbox formControlName="sendReset">Envoyer un email de réinitialisation après création</mat-checkbox>
-            }
-            <div class="actions">
-              <button mat-flat-button type="submit" [disabled]="busy()">Enregistrer</button>
-              <button mat-button type="button" [disabled]="busy()" (click)="accountMode.set(null)">Annuler</button>
-            </div>
-          </form>
+        @if (accountMode() === 'create') {
+          <ng-container [ngTemplateOutlet]="accountTemplate" />
         }
       </mat-card-content>
     </mat-card>
@@ -146,3 +117,39 @@
     </mat-card>
   }
 </main>
+
+<ng-template #accountTemplate>
+  <form [formGroup]="accountForm" (ngSubmit)="saveAccount()" [class.account-edit-dialog]="accountMode() === 'edit'">
+    <h2>{{ accountMode() === 'create' ? 'Créer un compte' : 'Modifier le compte' }}</h2>
+    @if (accountMode() === 'edit' && error()) {
+      <p class="error" role="alert">{{ error() }}</p>
+    }
+    @if (linkedParticipant(); as linked) {
+      <p>Participant : {{ linked }}. L’identifiant doit correspondre à ce nom, sans tenir compte de la casse ni des accents.</p>
+    }
+    <mat-form-field appearance="outline">
+      <mat-label>Identifiant</mat-label>
+      <input matInput formControlName="login" [readonly]="accountMode() === 'edit'" required autocomplete="off">
+      <mat-error>L’identifiant est obligatoire.</mat-error>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Email</mat-label>
+      <input matInput type="email" formControlName="email" required autocomplete="off">
+      <mat-error>Renseignez un email valide.</mat-error>
+    </mat-form-field>
+    <mat-checkbox formControlName="isAdmin">Administrateur</mat-checkbox>
+    @if (accountMode() === 'edit') {
+      <mat-form-field appearance="outline">
+        <mat-label>Nouveau mot de passe (facultatif)</mat-label>
+        <input matInput type="password" formControlName="password" autocomplete="new-password">
+      </mat-form-field>
+    } @else {
+      <p>Un mot de passe aléatoire non communiqué est généré. L’utilisateur peut obtenir un mot de passe par réinitialisation.</p>
+      <mat-checkbox formControlName="sendReset">Envoyer un email de réinitialisation après création</mat-checkbox>
+    }
+    <div class="actions">
+      <button mat-flat-button type="submit" [disabled]="busy()">Enregistrer</button>
+      <button mat-button type="button" [disabled]="busy()" (click)="cancelAccount()">Annuler</button>
+    </div>
+  </form>
+</ng-template>

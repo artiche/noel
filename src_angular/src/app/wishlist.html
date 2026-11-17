@@ -7,8 +7,8 @@
 <main>
   @if (loading()) { <p role="status">Chargement…</p> }
   @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
-  @if (message()) { <p role="status">{{ message() }}</p> }
-  <mat-card appearance="outlined" [hidden]="!own()">
+  @if (message() && !recipientTarget()) { <p role="status">{{ message() }}</p> }
+  <mat-card appearance="outlined" [hidden]="!own() || !!recipientTarget()">
     <mat-card-content>
       <h1>Ma wishlist</h1>
       <p>Cette wishlist reste disponible d’une année à l’autre.</p>
@@ -26,26 +26,23 @@
       </div>
       <div class="actions">
         <button mat-flat-button type="button" [disabled]="busy() || !dirty()" (click)="save()">Enregistrer</button>
-        <button mat-button type="button" [disabled]="busy() || dirty()" (click)="notify()">Envoyer ma wishlist à mon donneur</button>
+        @if (own()?.giver; as giver) {
+          <button mat-button type="button" [disabled]="busy() || dirty() || giverChanged()" (click)="notify()">Envoyer ma wishlist à {{ giver.name }}</button>
+        } @else {
+          <button mat-button type="button" disabled>Envoyer ma wishlist</button>
+        }
       </div>
+      @if (!own()?.giver) { <p>Aucun donneur disponible pour le dernier tirage.</p> }
+      @if (giverChanged()) { <p class="error" role="alert">Votre attribution a changé. Rechargez la page avant de réessayer.</p> }
       @if (dirty()) { <p role="status">Modifications non enregistrées. Enregistrez avant d’envoyer l’e-mail.</p> }
     </mat-card-content>
   </mat-card>
 
-  <mat-card appearance="outlined" [hidden]="!own()">
+  <mat-card appearance="outlined" [hidden]="!own() || !recipientTarget()">
     <mat-card-content>
-      <h2>Wishlist de la personne à qui j’offre un cadeau</h2>
-      @if (own(); as wishlist) {
-        @if (wishlist.recipient; as recipient) {
-          <p>Dernier tirage : {{ recipient.year }} · {{ recipient.name }}</p>
-          <a mat-button routerLink="/wishlist" [queryParams]="{ target: recipient.key }">Consulter sa wishlist</a>
-        } @else {
-          <p>Aucune attribution ne vous concerne dans le dernier tirage disponible.</p>
-        }
-      }
       @if (recipientLoading()) { <p role="status">Chargement de la wishlist…</p> }
       @if (recipientError()) { <p class="error" role="alert">{{ recipientError() }}</p> }
-      @if (recipientName()) { <h3>Wishlist de {{ recipientName() }} · {{ recipientYear() }}</h3> }
+      @if (recipientName()) { <h2>Wishlist de {{ recipientName() }} · {{ recipientYear() }}</h2> }
       @if (recipientEmpty()) { <p>Cette wishlist est vide.</p> }
       <div #recipientEditor [hidden]="!recipientName()"></div>
     </mat-card-content>

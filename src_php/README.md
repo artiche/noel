@@ -108,7 +108,8 @@ participant actuel, sans tenir compte de la casse ni des accents :
 
 - `GET /wishlist` renvoie le document personnel, sa revision et le
   destinataire du tirage le plus recent jusqu'a l'annee courante du serveur,
-  ou `null` en l'absence d'attribution.
+  ou `null` en l'absence d'attribution. Le champ `giver` contient le nom et
+  la cle normalisee du donneur actuel, ou `null` s'il n'est pas disponible.
 - `PUT /wishlist` recoit `ops` (document Quill Delta) et `revision`.
   La revision evite d'ecraser une modification concurrente (`409`).
 - `GET /wishlist/recipient?target=...` retourne la wishlist du destinataire
@@ -116,8 +117,11 @@ participant actuel, sans tenir compte de la casse ni des accents :
   La cible est la cle normalisee fournie par l'API ; elle ne confere aucun
   droit. L'autorisation est recalculee pour chaque consultation.
 - `POST /wishlist/notify` envoie au donneur du demandeur un lien cible vers
-  l'interface. L'envoi n'est pas automatique ni limite ; une absence de
-  tirage ou de compte donneur et les erreurs SMTP sont signalees.
+  l'interface et retourne son nom dans `giver`. Le champ optionnel
+  `expectedGiver` contient sa cle normalisee telle qu'affichee : en cas de
+  changement, l'API renvoie `409 giver_changed` sans envoyer l'email. L'envoi
+  n'est pas automatique ni limite ; une absence de tirage ou de compte
+  donneur et les erreurs SMTP sont signalees.
 
 Les images importees PNG, JPEG, GIF et WebP sont integrees au document : au
 maximum 5 Mo (5 000 000 octets) par image et 20 Mo d'images par wishlist. Les URL d'images

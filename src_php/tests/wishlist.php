@@ -59,6 +59,7 @@ try {
     assertEquals(200, $own['status'], 'participant accesses own wishlist');
     assertEquals('no-store', $own['headers']['Cache-Control'], 'wishlist is not cached');
     assertEquals(['name' => 'Claire', 'key' => 'claire', 'year' => $year], $own['body']['data']['recipient'], 'latest non-future draw is selected');
+    assertEquals(['name' => 'Bob', 'key' => 'bob'], $own['body']['data']['giver'], 'wishlist exposes the current giver');
     $revision = $own['body']['data']['revision'];
     $image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     $ops = [['insert' => 'Cadeau', 'attributes' => ['bold' => true]], ['insert' => "\n"],
@@ -69,24 +70,52 @@ try {
     assertEquals(403, $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['claire'])['status'], 'another participant cannot read the document or image');
     $received = $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['bob']);
     assertEquals($ops, $received['body']['data']['ops'], 'giver reads the targeted wishlist including images');
-    assertEquals(200, $wishlistApp->handle('POST', '/wishlist/notify', [], [], $cookies['beatrice'])['status'], 'notification is sent to giver');
+    $notification = $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'bob'], $cookies['beatrice']);
+    assertEquals(200, $notification['status'], 'notification is sent to giver');
+    assertEquals(['sent' => true, 'giver' => 'Bob'], $notification['body']['data'], 'notification identifies the actual giver');
     assertEquals('bob@example.com', $notifier->messages[0]['email'], 'notification goes to giver account');
     assertEquals('https://example.test/noel/wishlist?target=beatrice', $notifier->messages[0]['url'], 'notification contains targeted subpath-safe link');
+    $changed = $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'claire'], $cookies['beatrice']);
+    assertEquals(409, $changed['status'], 'stale giver is rejected');
+    assertEquals('giver_changed', $changed['body']['error']['code'], 'stale giver has a specific error');
+    assertEquals(1, count($notifier->messages), 'stale giver never sends a notification');
+    assertEquals(400, $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => null], $cookies['beatrice'])['status'], 'invalid expected giver is rejected');
     $misconfiguredApp = new App($repo, $service, $authService, $passwordResetService, 'noel_session', 1800, '/',
         $usersPath, $resetsPath, '/login', $constraintsPath, $historyPath, $wishlistDir, $notifier, 'https://secret@example.test/noel');
     assertEquals(500, $misconfiguredApp->handle('POST', '/wishlist/notify', [], [], $cookies['beatrice'])['status'], 'frontend URL cannot contain credentials');
     assertEquals(1, count($notifier->messages), 'misconfigured link is never sent');
+    assertEquals(200, $wishlistApp->handle('POST', '/wishlist/notify', [], [], $cookies['beatrice'])['status'], 'legacy notification requests remain supported');
+    file_put_contents($constraintsPath, json_encode([
+        'users' => ['Béatrice', 'BÓB', 'Claire'],
+        'forbiddenRecipientsByGiver' => ['Béatrice' => [], 'BÓB' => [], 'Claire' => []],
+    ]));
+    assertEquals(['name' => 'BÓB', 'key' => 'bob'], $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['giver'], 'giver uses current participant spelling');
+    $renamedNotification = $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'bob'], $cookies['beatrice']);
+    assertEquals('BÓB', $renamedNotification['body']['data']['giver'], 'confirmation uses current giver spelling');
+    file_put_contents($constraintsPath, json_encode([
+        'users' => ['Béatrice', 'Claire'],
+        'forbiddenRecipientsByGiver' => ['Béatrice' => [], 'Claire' => []],
+    ]));
+    assertEquals(null, $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['giver'], 'missing giver does not prevent editing the wishlist');
+    assertEquals(409, $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'bob'], $cookies['beatrice'])['status'], 'removed giver blocks a pending notification');
+    file_put_contents($constraintsPath, json_encode([
+        'users' => ['Béatrice', 'Bob', 'Claire'],
+        'forbiddenRecipientsByGiver' => ['Béatrice' => [], 'Bob' => [], 'Claire' => []],
+    ]));
     $notifier->fail = true;
     assertEquals(500, $wishlistApp->handle('POST', '/wishlist/notify', [], [], $cookies['beatrice'])['status'], 'mail failure is reported');
     $notifier->fail = false;
     file_put_contents($historyPath, json_encode(['years' => []]));
     assertEquals(null, $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['recipient'], 'wishlist is editable when no draw exists');
+    assertEquals(null, $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['giver'], 'no draw has no giver');
+    assertEquals(409, $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'bob'], $cookies['beatrice'])['status'], 'removed draw blocks a pending notification');
     assertEquals(404, $wishlistApp->handle('POST', '/wishlist/notify', [], [], $cookies['beatrice'])['status'], 'notification requires a draw');
     file_put_contents($historyPath, json_encode(['years' => [
         $year - 1 => ['Béatrice' => 'Bob', 'Bob' => 'Claire', 'Claire' => 'Beatrice'],
         $year => ['Bob' => 'Claire', 'Claire' => 'Bob'],
     ]]));
     assertEquals(null, $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['recipient'], 'does not fall back when participant is absent from newest draw');
+    assertEquals(null, $wishlistApp->handle('GET', '/wishlist', [], null, $cookies['beatrice'])['body']['data']['giver'], 'absent participant has no giver');
     assertEquals(403, $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['bob'])['status'], 'older assignments do not grant access');
     file_put_contents($historyPath, json_encode(['years' => [
         $year => ['Béatrice' => 'Bob', 'Bob' => 'Claire', 'Claire' => 'Beatrice'],
@@ -107,6 +136,9 @@ try {
     assertEquals(200, $wishlistApp->handle('PATCH', '/admin/participants', [], ['name' => 'Béatrice', 'newName' => 'BEATRICE'], $cookies['admin'])['status'], 'participant spelling can change');
     assertEquals('BEATRICE', $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['bob'])['body']['data']['participant'], 'normalized identity preserves access after rename');
     file_put_contents($historyPath, json_encode(['years' => [$year => ['BEATRICE' => 'Claire', 'Claire' => 'Bob', 'Bob' => 'BEATRICE']]]));
+    $messageCount = count($notifier->messages);
+    assertEquals(409, $wishlistApp->handle('POST', '/wishlist/notify', [], ['expectedGiver' => 'bob'], $cookies['beatrice'])['status'], 'changed draw rejects the previous giver');
+    assertEquals($messageCount, count($notifier->messages), 'changed draw sends no notification');
     assertEquals(403, $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['bob'])['status'], 'old link stops working when giver changes');
     assertEquals(200, $wishlistApp->handle('GET', '/wishlist/recipient', ['target' => 'beatrice'], null, $cookies['claire'])['status'], 'new giver gets access');
     assertEquals(200, $wishlistApp->handle('DELETE', '/admin/users', [], ['login' => 'claire'], $cookies['admin'])['status'], 'giver account can be deleted');

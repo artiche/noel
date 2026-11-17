@@ -2,6 +2,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { MatDialog } from '@angular/material/dialog';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Admin } from './admin';
@@ -94,6 +95,56 @@ describe('Administration', () => {
     http.expectOne('/api/admin/users').flush({ data });
     harness.detectChanges();
     expect(root.textContent).toContain('Le compte a été créé, mais l’email');
+  });
+
+  it('modifie un compte dans une modale et y affiche les erreurs', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('admin@example.com'))!;
+    button(row, 'Modifier').click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-label')).toBe('Modifier le compte');
+    expect(root.querySelector('form')).toBeNull();
+    const form = dialog.querySelector<HTMLFormElement>('form')!;
+    expect(form.querySelector<HTMLInputElement>('input[formControlName=login]')!.readOnly).toBe(true);
+    expect(form.querySelector<HTMLInputElement>('input[formControlName=email]')!.value).toBe('admin@example.com');
+    enter(form, 'email', 'new@example.com');
+    form.dispatchEvent(new Event('submit'));
+    const failed = http.expectOne('/api/admin/users');
+    expect(failed.request.method).toBe('PATCH');
+    expect(failed.request.body).toEqual({ login: 'admin', email: 'new@example.com', isAdmin: true });
+    harness.detectChanges();
+    expect(button(dialog, 'Annuler').disabled).toBe(true);
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(true);
+    failed.flush({ error: { code: 'last_admin' } }, { status: 400, statusText: 'Bad Request' });
+    harness.detectChanges();
+    expect(dialog.textContent).toContain('Le dernier administrateur');
+    expect(button(dialog, 'Annuler').disabled).toBe(false);
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(false);
+    form.dispatchEvent(new Event('submit'));
+    http.expectOne('/api/admin/users').flush({ data: { updated: true } });
+    http.expectOne('/api/session').flush({ data: { ...session, email: 'new@example.com' } });
+    http.expectOne('/api/admin/users').flush({ data });
+    harness.detectChanges();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(root.textContent).toContain('Compte modifié.');
+  });
+
+  it('annule la modification du compte sans envoyer de requête', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('admin@example.com'))!;
+    button(row, 'Modifier').click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    enter(dialog, 'email', 'new@example.com');
+    button(dialog, 'Annuler').click();
+    harness.detectChanges();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    http.expectNone('/api/admin/users');
   });
 
   it('modifie la graphie et les interdictions du participant', async () => {

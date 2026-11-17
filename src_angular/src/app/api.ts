@@ -51,6 +51,7 @@ export interface Wishlist {
   participant: string;
   ops: Op[];
   revision: string;
+  giver: { name: string; key: string } | null;
   recipient: { name: string; key: string; year: number } | null;
 }
 
@@ -59,6 +60,8 @@ export interface RecipientWishlist {
   year: number;
   ops: Op[];
 }
+
+export class InvalidNotificationResponseError extends Error {}
 
 interface ApiResponse<T> {
   data: T;
@@ -156,7 +159,14 @@ export class Api {
 
   wishlist(): Observable<Wishlist> {
     return this.http.get<ApiResponse<Wishlist>>(`${this.base}wishlist`, { withCredentials: true })
-      .pipe(map((response) => response.data));
+      .pipe(map((response) => {
+        const giver = response.data?.giver;
+        if (giver !== null && (!giver || typeof giver.name !== 'string' || giver.name === '' ||
+            typeof giver.key !== 'string' || giver.key === '')) {
+          throw new Error('Invalid wishlist giver');
+        }
+        return response.data;
+      }));
   }
 
   saveWishlist(ops: Op[], revision: string): Observable<{ revision: string }> {
@@ -171,10 +181,15 @@ export class Api {
     ).pipe(map((response) => response.data));
   }
 
-  notifyGiver(): Observable<void> {
-    return this.http.post<ApiResponse<{ sent: boolean }>>(
-      `${this.base}wishlist/notify`, {}, { withCredentials: true },
-    ).pipe(map(() => undefined));
+  notifyGiver(expectedGiver: string): Observable<string> {
+    return this.http.post<ApiResponse<{ sent: boolean; giver: string }>>(
+      `${this.base}wishlist/notify`, { expectedGiver }, { withCredentials: true },
+    ).pipe(map((response) => {
+      if (response.data?.sent !== true || typeof response.data.giver !== 'string' || response.data.giver === '') {
+        throw new InvalidNotificationResponseError('Invalid wishlist notification response');
+      }
+      return response.data.giver;
+    }));
   }
 
   draw(year: number): Observable<Draw> {
@@ -193,13 +208,13 @@ export class Api {
     }));
   }
 
-  latestDraw(year: number): Observable<Draw | null> {
-    if (year < FIRST_YEAR) {
+  latestDraw(year: number, minimumYear = FIRST_YEAR): Observable<Draw | null> {
+    if (year < minimumYear) {
       return of(null);
     }
     return this.draw(year).pipe(
       catchError((error: unknown) =>
-        isMissingDraw(error) ? this.latestDraw(year - 1) : throwError(() => error),
+        isMissingDraw(error) ? this.latestDraw(year - 1, minimumYear) : throwError(() => error),
       ),
     );
   }

@@ -4,6 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { MatDialog } from '@angular/material/dialog';
 import { routes } from './app.routes';
 import { Draws } from './draws';
 import { sessionInterceptor } from './session.interceptor';
@@ -78,18 +79,17 @@ describe('Consultation des tirages', () => {
       participant: 'Béatrice', participantKey: 'beatrice',
     } });
     harness.detectChanges();
+    http.expectOne(`/api/draw/${currentYear}`).flush({
+      data: { year: currentYear, assignmentsByGiver: {}, lines: [], assignments: [] },
+    });
+    harness.detectChanges();
     expect(rows().map((row) => row.classList.contains('giver'))).toEqual([true, false, false, false, false, true]);
     expect(rows().map((row) => row.classList.contains('recipient'))).toEqual([false, true, false, false, false, true]);
     expect(Array.from(rows()[0].querySelectorAll('strong')).map((element) => element.textContent))
       .toEqual(['BÉATRICE', 'Alpha offre un cadeau à Beta']);
-    expect(rows()[0].textContent).toContain('Vous offrez');
-    expect(rows()[0].textContent).not.toContain('Vous recevez');
-    expect(rows()[1].textContent).toContain('Vous recevez');
-    expect(rows()[1].textContent).not.toContain('Vous offrez');
-    expect(rows()[2].textContent).not.toContain('Vous offrez');
-    expect(rows()[2].textContent).not.toContain('Vous recevez');
-    expect(rows()[5].textContent).toContain('Vous offrez');
-    expect(rows()[5].textContent).toContain('Vous recevez');
+    expect(rows()[0].querySelector('.wishlist-link')).toBeNull();
+    expect(rows()[1].querySelector('.wishlist-link')).toBeNull();
+    expect(rows()[2].querySelector('.wishlist-link')).toBeNull();
     const cell = rows()[0].querySelector('td')!;
     expect(parseFloat(getComputedStyle(cell).fontSize)).toBeGreaterThanOrEqual(17.6);
     expect(getComputedStyle(cell).backgroundColor).toBe('rgb(228, 240, 226)');
@@ -104,11 +104,107 @@ describe('Consultation des tirages', () => {
       participant: 'Œ', participantKey: 'œ',
     } });
     harness.detectChanges();
+    http.expectOne(`/api/draw/${currentYear}`).flush({
+      data: { year: currentYear, assignmentsByGiver: {}, lines: [], assignments: [] },
+    });
+    harness.detectChanges();
     expect(rows().map((row) => row.classList.contains('giver'))).toEqual([false, false, false, true, false, false]);
     expect(rows().map((row) => row.classList.contains('recipient'))).toEqual([false, false, false, false, false, false]);
     session.clear();
     harness.detectChanges();
     expect(rows().filter((row) => row.classList.contains('giver') || row.classList.contains('recipient'))).toHaveLength(0);
+  });
+
+  it('affiche le lien uniquement pour le dernier tirage, même antérieur à l’année en cours', async () => {
+    TestBed.inject(SessionService).load().subscribe();
+    http.expectOne('/api/session').flush({ data: {
+      authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com',
+      participant: 'Alice', participantKey: 'alice',
+    } });
+    const assignment = { giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' };
+    const draw = (year: number) => ({ data: { year, assignmentsByGiver: {}, lines: [], assignments: [assignment] } });
+
+    await harness.navigateByUrl('/tirages', Draws);
+    http.expectOne(`/api/draw/${currentYear}`).flush(
+      { error: { code: 'draw_not_found' } }, { status: 404, statusText: 'Not Found' },
+    );
+    http.expectOne(`/api/draw/${currentYear - 1}`).flush(draw(currentYear - 1));
+    harness.detectChanges();
+    const link = () => harness.routeNativeElement!.querySelector<HTMLAnchorElement>('.wishlist-link');
+    expect(link()).not.toBeNull();
+    expect(TestBed.inject(Router).parseUrl(link()!.getAttribute('href')!).queryParams['target']).toBe('bob');
+
+    await harness.navigateByUrl(`/tirages/${currentYear - 2}`, Draws);
+    http.expectOne(`/api/draw/${currentYear - 2}`).flush(draw(currentYear - 2));
+    harness.detectChanges();
+    expect(link()).toBeNull();
+    http.expectOne(`/api/draw/${currentYear}`).flush(
+      { error: { code: 'draw_not_found' } }, { status: 404, statusText: 'Not Found' },
+    );
+    http.expectOne(`/api/draw/${currentYear - 1}`).flush(draw(currentYear - 1));
+    harness.detectChanges();
+    expect(link()).toBeNull();
+
+    await harness.navigateByUrl(`/tirages/${currentYear - 1}`, Draws);
+    http.expectOne(`/api/draw/${currentYear - 1}`).flush(draw(currentYear - 1));
+    harness.detectChanges();
+    expect(link()).toBeNull();
+    http.expectOne(`/api/draw/${currentYear}`).flush(
+      { error: { code: 'draw_not_found' } }, { status: 404, statusText: 'Not Found' },
+    );
+    harness.detectChanges();
+    expect(link()).not.toBeNull();
+    http.expectNone(`/api/draw/${currentYear - 1}`);
+  });
+
+  it('signale une erreur de vérification et permet de réessayer', async () => {
+    TestBed.inject(SessionService).load().subscribe();
+    http.expectOne('/api/session').flush({ data: {
+      authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com',
+      participant: 'Alice', participantKey: 'alice',
+    } });
+    await harness.navigateByUrl(`/tirages/${currentYear - 1}`, Draws);
+    http.expectOne(`/api/draw/${currentYear - 1}`).flush({
+      data: { year: currentYear - 1, assignmentsByGiver: {}, lines: [],
+        assignments: [{ giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' }] },
+    });
+    harness.detectChanges();
+    http.expectOne(`/api/draw/${currentYear}`).flush(
+      { error: { code: 'internal_error' } }, { status: 500, statusText: 'Error' },
+    );
+    harness.detectChanges();
+    const root = harness.routeNativeElement!;
+    expect(root.querySelector('.wishlist-link')).toBeNull();
+    expect(root.textContent).toContain('Impossible de vérifier le dernier tirage');
+    Array.from(root.querySelectorAll('button')).find((button) => button.textContent?.includes('Réessayer'))!.click();
+    harness.detectChanges();
+    http.expectOne(`/api/draw/${currentYear}`).flush(
+      { error: { code: 'draw_not_found' } }, { status: 404, statusText: 'Not Found' },
+    );
+    harness.detectChanges();
+    expect(root.querySelector('.wishlist-link')).not.toBeNull();
+    expect(root.textContent).not.toContain('Impossible de vérifier le dernier tirage');
+  });
+
+  it('annule la vérification en changeant de tirage', async () => {
+    TestBed.inject(SessionService).load().subscribe();
+    http.expectOne('/api/session').flush({ data: {
+      authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com',
+      participant: 'Alice', participantKey: 'alice',
+    } });
+    const assignment = { giver: 'Alice', recipient: 'Bob', giverKey: 'alice', recipientKey: 'bob' };
+    const draw = (year: number) => ({ data: { year, assignmentsByGiver: {}, lines: [], assignments: [assignment] } });
+    await harness.navigateByUrl(`/tirages/${currentYear - 1}`, Draws);
+    http.expectOne(`/api/draw/${currentYear - 1}`).flush(draw(currentYear - 1));
+    harness.detectChanges();
+    const pending = http.expectOne(`/api/draw/${currentYear}`);
+    await harness.navigateByUrl(`/tirages/${currentYear}`, Draws);
+    harness.detectChanges();
+    expect(pending.cancelled).toBe(true);
+    http.expectOne(`/api/draw/${currentYear}`).flush(draw(currentYear));
+    harness.detectChanges();
+    expect(harness.routeNativeElement!.querySelector('.wishlist-link')).not.toBeNull();
+    http.expectNone(`/api/draw/${currentYear}`);
   });
 
   it('ne montre pas le lien d’administration à un utilisateur non administrateur', async () => {
@@ -130,23 +226,31 @@ describe('Consultation des tirages', () => {
       .find((item) => item.textContent?.includes('Modifier'))!.click();
     harness.detectChanges();
     const root = harness.routeNativeElement as HTMLElement;
-    const email = root.querySelector<HTMLInputElement>('input[formControlName=email]')!;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-label')).toBe('Modifier mon compte');
+    expect(root.querySelector('form')).toBeNull();
+    const email = dialog.querySelector<HTMLInputElement>('input[formControlName=email]')!;
     expect(email.value).toBe('alice@example.com');
     email.value = 'new@example.com';
     email.dispatchEvent(new Event('input'));
-    const password = root.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    const password = dialog.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
     password.value = 'secret';
     password.dispatchEvent(new Event('input'));
-    root.querySelector('form')!.dispatchEvent(new Event('submit'));
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit'));
     const update = http.expectOne('/api/account');
     expect(update.request.body).toEqual({ currentPassword: 'secret', email: 'new@example.com' });
+    harness.detectChanges();
+    expect(dialog.querySelector<HTMLButtonElement>('button[type=button]')!.disabled).toBe(true);
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(true);
     update.flush({ data: { updated: true } });
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(true);
     http.expectOne('/api/session').flush({
       data: { authenticated: true, isAdmin: false, login: 'alice', email: 'new@example.com', participant: null, participantKey: null },
     });
     harness.detectChanges();
+    await harness.fixture.whenStable();
     expect(root.textContent).toContain('Votre compte a été modifié');
-    expect(root.querySelector('form')).toBeNull();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('affiche une erreur si le mot de passe actuel est incorrect', async () => {
@@ -158,20 +262,81 @@ describe('Consultation des tirages', () => {
     Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
       .find((item) => item.textContent?.includes('Modifier'))!.click();
     harness.detectChanges();
-    const root = harness.routeNativeElement as HTMLElement;
-    const password = root.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const password = dialog.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
     password.value = 'wrong';
     password.dispatchEvent(new Event('input'));
-    const newPassword = root.querySelector<HTMLInputElement>('input[formControlName=newPassword]')!;
+    const newPassword = dialog.querySelector<HTMLInputElement>('input[formControlName=newPassword]')!;
     newPassword.value = 'new';
     newPassword.dispatchEvent(new Event('input'));
-    root.querySelector('form')!.dispatchEvent(new Event('submit'));
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit'));
     http.expectOne('/api/account').flush(
       { error: { code: 'invalid_current_password' } }, { status: 403, statusText: 'Forbidden' },
     );
     harness.detectChanges();
-    expect(root.textContent).toContain('Le mot de passe actuel est incorrect');
+    expect(dialog.textContent).toContain('Le mot de passe actuel est incorrect');
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(false);
     expect(TestBed.inject(SessionService).session()?.login).toBe('alice');
+    dialog.querySelector<HTMLButtonElement>('button[type=button]')!.click();
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(harness.routeNativeElement?.textContent).not.toContain('Le mot de passe actuel est incorrect');
+  });
+
+  it('signale sur la page si le compte est modifié mais que la session ne se recharge pas', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    harness.detectChanges();
+    harness.routeNativeElement!.querySelector<HTMLButtonElement>('[aria-label="Menu utilisateur"]')!.click();
+    harness.detectChanges();
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
+      .find((item) => item.textContent?.includes('Modifier'))!.click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const password = dialog.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    password.value = 'secret';
+    password.dispatchEvent(new Event('input'));
+    const newPassword = dialog.querySelector<HTMLInputElement>('input[formControlName=newPassword]')!;
+    newPassword.value = 'new';
+    newPassword.dispatchEvent(new Event('input'));
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit'));
+    http.expectOne('/api/account').flush({ data: { updated: true } });
+    http.expectOne('/api/session').flush(
+      { error: { code: 'internal_error' } }, { status: 500, statusText: 'Error' },
+    );
+    harness.detectChanges();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(harness.routeNativeElement?.textContent).toContain('Le compte a été modifié, mais la session');
+  });
+
+  it('annule la modification et efface les mots de passe avant une réouverture', async () => {
+    await harness.navigateByUrl('/tirages/2021', Draws);
+    http.expectOne('/api/draw/2021').flush({ data: { year: 2021, assignmentsByGiver: {}, lines: [], assignments: [] } });
+    harness.detectChanges();
+    const open = () => {
+      harness.routeNativeElement!.querySelector<HTMLButtonElement>('[aria-label="Menu utilisateur"]')!.click();
+      harness.detectChanges();
+      Array.from(document.querySelectorAll<HTMLButtonElement>('.mat-mdc-menu-item'))
+        .find((item) => item.textContent?.includes('Modifier'))!.click();
+      harness.detectChanges();
+      return document.querySelector<HTMLElement>('[role="dialog"]')!;
+    };
+    const dialog = open();
+    const password = dialog.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!;
+    password.value = 'secret';
+    password.dispatchEvent(new Event('input'));
+    dialog.querySelector<HTMLButtonElement>('button[type=button]')!.click();
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    http.expectNone('/api/account');
+    const reopened = open();
+    expect(reopened.querySelector<HTMLInputElement>('input[formControlName=currentPassword]')!.value).toBe('');
+    await harness.navigateByUrl('/connexion');
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('signale une année choisie absente sans chercher une autre année', async () => {

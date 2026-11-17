@@ -31,10 +31,15 @@ final class WishlistService
         $participant = $this->participant($login);
         $document = $this->document(Identity::normalize($participant));
         $assignment = $this->assignment($participant);
+        $giver = $assignment === null ? null : $this->findParticipant($assignment['giver']);
         return [
             'participant' => $participant,
             'ops' => $document['ops'],
             'revision' => $this->revision($document['ops']),
+            'giver' => $giver === null ? null : [
+                'name' => $giver,
+                'key' => Identity::normalize($giver),
+            ],
             'recipient' => $assignment === null ? null : [
                 'name' => $assignment['recipient'],
                 'key' => Identity::normalize($assignment['recipient']),
@@ -74,14 +79,24 @@ final class WishlistService
         ];
     }
 
-    public function notifyGiver(string $login): void
+    public function notifyGiver(string $login, ?string $expectedGiver = null): string
     {
         $participant = $this->participant($login);
         $assignment = $this->assignment($participant);
+        if ($expectedGiver !== null && ($assignment === null ||
+            !hash_equals(Identity::normalize($assignment['giver']), $expectedGiver))) {
+            throw new ApiException(409, 'giver_changed', 'Giver has changed since the wishlist was loaded');
+        }
         if ($assignment === null) {
             throw new ApiException(404, 'draw_assignment_missing', 'No assignment in the latest draw');
         }
-        $giver = $this->participant($assignment['giver']);
+        $giver = $this->findParticipant($assignment['giver']);
+        if ($giver === null && $expectedGiver !== null) {
+            throw new ApiException(409, 'giver_changed', 'Giver is no longer available');
+        }
+        if ($giver === null) {
+            throw new ApiException(403, 'participant_required', 'A participant account is required');
+        }
         $user = null;
         foreach ($this->repository->loadUsers($this->usersPath)['users'] as $candidate) {
             if (Identity::normalize($candidate['login']) === Identity::normalize($giver)) {
@@ -99,9 +114,19 @@ final class WishlistService
         }
         $url = rtrim($this->frontendUrl, '/') . '/wishlist?target=' . rawurlencode(Identity::normalize($participant));
         $this->notifier->sendWishlistEmail($user['login'], $user['email'], $participant, $url);
+        return $giver;
     }
 
     private function participant(string $identity): string
+    {
+        $participant = $this->findParticipant($identity);
+        if ($participant !== null) {
+            return $participant;
+        }
+        throw new ApiException(403, 'participant_required', 'A participant account is required');
+    }
+
+    private function findParticipant(string $identity): ?string
     {
         $normalized = Identity::normalize($identity);
         foreach ($this->repository->loadConstraints($this->constraintsPath)['users'] as $name) {
@@ -109,7 +134,7 @@ final class WishlistService
                 return $name;
             }
         }
-        throw new ApiException(403, 'participant_required', 'A participant account is required');
+        return null;
     }
 
     /** @return array{year:int,recipient:string,giver:string}|null */

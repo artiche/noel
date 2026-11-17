@@ -115,8 +115,11 @@ accèdent à l'écran **Administration** depuis le bandeau pour gérer comptes,
 participants et interdictions. Un compte peut être créé depuis un participant
 avec un identifiant proposé sans accents ni majuscules. Le mot de passe initial
 généré n'est pas communiqué ; un email de réinitialisation peut être demandé
-à la création ou ultérieurement. Les autorisations sont toujours vérifiées
+à la création ou ultérieurement. La modification d'un compte s'ouvre dans une
+fenêtre modale. Les autorisations sont toujours vérifiées
 par l'API. Les sessions anciennes sans rôle nécessitent une reconnexion.
+Depuis le menu utilisateur des tirages, la modification de son propre compte
+s'effectue également dans une fenêtre modale.
 
 Les noms des attributions sont mis en gras. Les lignes où le participant
 connecté donne ou reçoit sont distinguées par leur couleur et un libellé,
@@ -127,8 +130,12 @@ Les comptes associés à un participant disposent de l'écran **Wishlist**. La
 wishlist personnelle est enregistrée explicitement et conservée d'une année à
 l'autre. On peut y ajouter des images locales ou des images par URL HTTPS ;
 ces dernières contactent leur serveur lorsque la wishlist est affichée.
-L'écran propose la wishlist du destinataire du dernier tirage jusqu'à l'année
-en cours et l'envoi manuel d'un lien au donneur. Le lien nécessite une
+La wishlist du destinataire est accessible depuis le tirage le plus récent ; l'accès est
+limité au destinataire du dernier tirage jusqu'à l'année en cours. L'écran
+affiche alors uniquement cette wishlist, en lecture seule. La wishlist personnelle
+permet aussi l'envoi manuel d'un lien au donneur nommé du dernier tirage. Si
+son attribution change, il faut recharger la page avant d'envoyer le lien.
+En l'absence de donneur, l'envoi est désactivé. Le lien nécessite une
 connexion et les droits sont revérifiés par l'API au moment de la lecture.
 Déployer et configurer l'API wishlist avant cette version du frontend ; voir
 la documentation PHP pour le stockage privé et la configuration SMTP/URL.

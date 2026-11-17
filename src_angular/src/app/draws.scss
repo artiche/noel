@@ -33,16 +33,13 @@ main {
 }
 
 .results-card mat-card-content {
-  padding: clamp(1.5rem, 5vw, 3.5rem);
+  padding: clamp(1.5rem, 5vw, 2rem);
 }
 
-.account-card {
-  margin-bottom: 1.5rem;
-}
-
-.account-card form {
+.account-dialog {
   display: grid;
   gap: 0.5rem;
+  padding: 1.5rem;
 }
 
 .account-actions {
@@ -162,6 +159,23 @@ td.mat-mdc-cell {
   color: #51320b;
 }
 
+.wishlist-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 44px;
+  margin-left: 0.6rem;
+  color: #1b4332;
+  font-size: 0.85rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.wishlist-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
 td mat-icon {
   display: inline-block;
   width: 18px;
@@ -170,6 +184,11 @@ td mat-icon {
   color: #9b2226;
   font-size: 18px;
   vertical-align: middle;
+}
+
+td .wishlist-link mat-icon {
+  margin-right: 0;
+  color: inherit;
 }
 
 @media (max-width: 520px) {
