@@ -8,7 +8,7 @@
   @if (loading()) {
     <p role="status">Chargement…</p>
   }
-  @if (error() && accountMode() !== 'edit') {
+  @if (error() && accountMode() !== 'edit' && !deleteChoice()) {
     <p class="error" role="alert">{{ error() }}</p>
   }
   @if (message()) {
@@ -102,21 +102,23 @@
       </mat-card-content>
     </mat-card>
   }
-  @if (deleteChoice(); as choice) {
-    <mat-card appearance="outlined">
-      <mat-card-content>
-        <h2>Confirmer la suppression</h2>
-        @if (choice.login) { <p>Compte : {{ choice.login }}</p> }
-        @if (choice.name) { <p>Participant : {{ choice.name }}</p> }
-        <p>Les tirages enregistrés ne seront pas modifiés.</p>
-        <div class="actions">
-          <button mat-flat-button type="button" [disabled]="busy()" (click)="deleteSelected()">Confirmer</button>
-          <button mat-button type="button" [disabled]="busy()" (click)="deleteChoice.set(null)">Annuler</button>
-        </div>
-      </mat-card-content>
-    </mat-card>
-  }
 </main>
+
+<ng-template #deleteTemplate>
+  @if (deleteChoice(); as choice) {
+    <div class="delete-dialog">
+      <h2>Confirmer la suppression</h2>
+      @if (choice.login) { <p>Compte : {{ choice.login }}</p> }
+      @if (choice.name) { <p>Participant : {{ choice.name }}</p> }
+      <p>Les tirages enregistrés ne seront pas modifiés.</p>
+      @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+      <div class="actions">
+        <button mat-button type="button" [disabled]="busy()" (click)="cancelDelete()">Annuler</button>
+        <button mat-flat-button type="button" [disabled]="busy()" (click)="deleteSelected()">Confirmer</button>
+      </div>
+    </div>
+  }
+</ng-template>
 
 <ng-template #accountTemplate>
   <form [formGroup]="accountForm" (ngSubmit)="saveAccount()" [class.account-edit-dialog]="accountMode() === 'edit'">

@@ -120,6 +120,7 @@ fenêtre modale. Les autorisations sont toujours vérifiées
 par l'API. Les sessions anciennes sans rôle nécessitent une reconnexion.
 Depuis le menu utilisateur des tirages, la modification de son propre compte
 s'effectue également dans une fenêtre modale.
+Les suppressions dans l'administration demandent confirmation dans une modale.
 
 Les noms des attributions sont mis en gras. Les lignes où le participant
 connecté donne ou reçoit sont distinguées par leur couleur et un libellé,
@@ -137,6 +138,9 @@ permet aussi l'envoi manuel d'un lien au donneur nommé du dernier tirage. Si
 son attribution change, il faut recharger la page avant d'envoyer le lien.
 En l'absence de donneur, l'envoi est désactivé. Le lien nécessite une
 connexion et les droits sont revérifiés par l'API au moment de la lecture.
+Quitter une wishlist modifiée dans l'application demande confirmation dans une
+modale ; pour un rechargement ou une fermeture d'onglet, le navigateur affiche
+sa confirmation native.
 Déployer et configurer l'API wishlist avant cette version du frontend ; voir
 la documentation PHP pour le stockage privé et la configuration SMTP/URL.
 

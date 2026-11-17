@@ -1,26 +1,29 @@
 import { DOCUMENT } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { AfterViewInit, Component, DestroyRef, ElementRef, inject, signal, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, DestroyRef, ElementRef, inject, signal, TemplateRef, ViewChild } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import Quill, { Delta } from 'quill';
-import { catchError, EMPTY, switchMap } from 'rxjs';
+import { catchError, EMPTY, finalize, map, Observable, switchMap } from 'rxjs';
 import { Api, InvalidNotificationResponseError, Wishlist as WishlistData } from './api';
 import { SessionService } from './session';
 
 @Component({
   selector: 'app-wishlist',
-  imports: [MatButtonModule, MatCardModule, MatToolbarModule, RouterLink],
+  imports: [MatButtonModule, MatCardModule, MatDialogModule, MatToolbarModule, RouterLink],
   templateUrl: './wishlist.html',
   styleUrl: './wishlist.scss',
 })
 export class Wishlist implements AfterViewInit {
   @ViewChild('editor', { static: true }) private editorElement!: ElementRef<HTMLElement>;
   @ViewChild('recipientEditor', { static: true }) private recipientElement!: ElementRef<HTMLElement>;
+  @ViewChild('leaveTemplate', { static: true }) private leaveTemplate!: TemplateRef<unknown>;
   private readonly api = inject(Api);
+  private readonly dialog = inject(MatDialog);
   private readonly session = inject(SessionService);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
@@ -132,8 +135,16 @@ export class Wishlist implements AfterViewInit {
     });
   }
 
-  canDeactivate(): boolean {
-    return !this.dirty() || (this.document.defaultView?.confirm('Quitter sans enregistrer votre wishlist ?') ?? false);
+  canDeactivate(): boolean | Observable<boolean> {
+    if (!this.dirty()) return true;
+    const dialog = this.dialog.open<unknown, unknown, boolean>(this.leaveTemplate, {
+      ariaLabel: 'Modifications non enregistrées', ariaModal: true, width: '36rem', maxWidth: '95vw',
+      autoFocus: 'first-tabbable',
+    });
+    return dialog.afterClosed().pipe(
+      map((confirmed) => confirmed === true),
+      finalize(() => dialog.close()),
+    );
   }
 
   protected save(): void {

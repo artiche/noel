@@ -25,9 +25,11 @@ type DeleteChoice = { login?: string; name?: string };
 })
 export class Admin {
   @ViewChild('accountTemplate', { static: true }) private accountTemplate!: TemplateRef<unknown>;
+  @ViewChild('deleteTemplate', { static: true }) private deleteTemplate!: TemplateRef<unknown>;
   private readonly api = inject(Api);
   private readonly dialog = inject(MatDialog);
   private accountDialog?: MatDialogRef<unknown>;
+  private deleteDialog?: MatDialogRef<unknown>;
   private readonly session = inject(SessionService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly router = inject(Router);
@@ -56,7 +58,10 @@ export class Admin {
   });
 
   constructor() {
-    this.destroyRef.onDestroy(() => this.accountDialog?.close());
+    this.destroyRef.onDestroy(() => {
+      this.accountDialog?.close();
+      this.deleteDialog?.close();
+    });
     this.session.load().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (session) => {
         if (session.isAdmin) this.loadData();
@@ -224,24 +229,42 @@ export class Admin {
   }
 
   protected confirmDelete(choice: DeleteChoice): void {
+    if (this.busy() || this.deleteDialog) return;
     this.clearFeedback();
     this.deleteChoice.set(choice);
+    const dialog = this.dialog.open(this.deleteTemplate, {
+      ariaLabel: 'Confirmer la suppression', ariaModal: true, width: '36rem', maxWidth: '95vw',
+      autoFocus: 'first-tabbable',
+    });
+    this.deleteDialog = dialog;
+    dialog.afterClosed().pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      if (this.deleteDialog !== dialog) return;
+      this.deleteDialog = undefined;
+      this.deleteChoice.set(null);
+    });
+  }
+
+  protected cancelDelete(): void {
+    if (!this.busy()) this.deleteDialog?.close();
   }
 
   protected deleteSelected(): void {
     const choice = this.deleteChoice();
     if (choice === null || this.busy()) return;
     this.busy.set(true);
+    if (this.deleteDialog) this.deleteDialog.disableClose = true;
     this.clearFeedback();
     const deleteUser = () => {
       if (choice.login === undefined) {
         this.deleteChoice.set(null);
+        this.deleteDialog?.close();
         this.finish('Participant supprimé.');
         return;
       }
       this.api.deleteUser(choice.login).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: () => {
           this.deleteChoice.set(null);
+          this.deleteDialog?.close();
           if (choice.login === this.user()?.login) {
             this.session.clear();
             void this.router.navigate(['/connexion']);
@@ -250,12 +273,16 @@ export class Admin {
           }
         },
         error: (error: unknown) => {
-          this.deleteChoice.set(null);
           this.busy.set(false);
-          this.error.set(choice.name
-            ? `Le participant a été supprimé, mais pas le compte. ${this.errorMessage(error)}`
-            : this.errorMessage(error));
-          this.loadData();
+          if (choice.name !== undefined) {
+            this.deleteChoice.set(null);
+            this.deleteDialog?.close();
+            this.error.set(`Le participant a été supprimé, mais pas le compte. ${this.errorMessage(error)}`);
+            this.loadData();
+          } else {
+            if (this.deleteDialog) this.deleteDialog.disableClose = false;
+            this.error.set(this.errorMessage(error));
+          }
         },
       });
     };
@@ -264,7 +291,10 @@ export class Admin {
     } else {
       this.api.deleteParticipant(choice.name).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
         next: deleteUser,
-        error: (error: unknown) => this.fail(error),
+        error: (error: unknown) => {
+          if (this.deleteDialog) this.deleteDialog.disableClose = false;
+          this.fail(error);
+        },
       });
     }
   }

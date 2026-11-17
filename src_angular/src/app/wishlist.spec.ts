@@ -2,6 +2,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
+import { MatDialog } from '@angular/material/dialog';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import Quill from 'quill';
@@ -116,6 +117,61 @@ describe('Wishlists', () => {
     expect(getComputedStyle(cards[1]).display).toBe('none');
     expect(editor.getText()).toContain('Un livre');
     expect(root.textContent).toContain('Modifications non enregistrées');
+  });
+
+  it('demande confirmation dans une modale avant de quitter une wishlist modifiée', async () => {
+    const root = await load();
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
+    const editor = Quill.find(root.querySelector('.ql-container')!);
+    if (!(editor instanceof Quill)) throw new Error('Editor not found');
+    editor.insertText(0, 'Un livre', 'user');
+    harness.detectChanges();
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false);
+    const router = TestBed.inject(Router);
+    const cancelled = router.navigateByUrl('/connexion');
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    let dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-label')).toBe('Modifications non enregistrées');
+    button(dialog, 'Rester').click();
+    expect(await cancelled).toBe(false);
+    harness.detectChanges();
+    expect(router.url).toBe('/wishlist');
+    expect(editor.getText()).toContain('Un livre');
+    const confirmed = router.navigateByUrl('/connexion');
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    button(dialog, 'Quitter').click();
+    expect(await confirmed).toBe(true);
+    expect(router.url).toBe('/connexion');
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(window.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(true);
+  });
+
+  it('quitte sans confirmation si la wishlist est inchangée', async () => {
+    await load();
+    expect(await TestBed.inject(Router).navigateByUrl('/connexion')).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('ferme une confirmation remplacée par une nouvelle navigation', async () => {
+    const root = await load();
+    const editor = Quill.find(root.querySelector('.ql-container')!);
+    if (!(editor instanceof Quill)) throw new Error('Editor not found');
+    editor.insertText(0, 'Un livre', 'user');
+    const router = TestBed.inject(Router);
+    const first = router.navigateByUrl('/connexion');
+    await vi.waitFor(() => expect(TestBed.inject(MatDialog).openDialogs).toHaveLength(1));
+    const second = router.navigateByUrl('/tirages');
+    expect(await first).toBe(false);
+    await vi.waitFor(() => expect(TestBed.inject(MatDialog).openDialogs).toHaveLength(1));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    expect(await second).toBe(false);
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(router.url).toBe('/wishlist');
+    expect(editor.getText()).toContain('Un livre');
   });
 
   it('indique que le donneur ne possède pas de compte', async () => {

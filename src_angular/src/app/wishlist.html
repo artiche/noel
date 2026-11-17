@@ -48,3 +48,14 @@
     </mat-card-content>
   </mat-card>
 </main>
+
+<ng-template #leaveTemplate>
+  <div class="leave-dialog">
+    <h2>Modifications non enregistrées</h2>
+    <p>Quitter sans enregistrer votre wishlist ?</p>
+    <div class="actions">
+      <button mat-button type="button" [mat-dialog-close]="false">Rester</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="true">Quitter</button>
+    </div>
+  </div>
+</ng-template>

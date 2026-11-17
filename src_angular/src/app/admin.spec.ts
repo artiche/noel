@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { MatDialog } from '@angular/material/dialog';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Admin } from './admin';
 import { routes } from './app.routes';
@@ -172,7 +172,10 @@ describe('Administration', () => {
       .find((entry) => entry.textContent?.includes('Compte : bob'))!;
     button(row, 'Supprimer les deux').click();
     harness.detectChanges();
-    button(root, 'Confirmer').click();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Compte : bob');
+    expect(dialog.textContent).toContain('Participant : Bob');
+    button(dialog, 'Confirmer').click();
     const participant = http.expectOne('/api/admin/participants');
     expect(participant.request.body).toEqual({ name: 'Bob' });
     participant.flush({ data: { updated: true } });
@@ -182,5 +185,101 @@ describe('Administration', () => {
     http.expectOne('/api/admin/users').flush({ data });
     harness.detectChanges();
     expect(root.textContent).toContain('Le participant a été supprimé, mais pas le compte');
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('confirme la suppression d’un compte dans une modale et permet de réessayer après une erreur', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('admin@example.com'))!;
+    button(row, 'Supprimer le compte').click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.getAttribute('aria-label')).toBe('Confirmer la suppression');
+    expect(dialog.textContent).toContain('Compte : admin');
+    expect(root.textContent).not.toContain('Confirmer la suppression');
+    http.expectNone('/api/admin/users');
+    button(dialog, 'Confirmer').click();
+    const request = http.expectOne('/api/admin/users');
+    expect(request.request.method).toBe('DELETE');
+    expect(request.request.body).toEqual({ login: 'admin' });
+    harness.detectChanges();
+    expect(button(dialog, 'Confirmer').disabled).toBe(true);
+    expect(button(dialog, 'Annuler').disabled).toBe(true);
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(true);
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    document.querySelector<HTMLElement>('.cdk-overlay-backdrop')!.click();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    request.flush({ error: { code: 'last_admin' } }, { status: 409, statusText: 'Conflict' });
+    harness.detectChanges();
+    expect(dialog.textContent).toContain('Le dernier administrateur');
+    expect(button(dialog, 'Confirmer').disabled).toBe(false);
+    expect(TestBed.inject(MatDialog).openDialogs[0].disableClose).toBe(false);
+    button(dialog, 'Confirmer').click();
+    http.expectOne('/api/admin/users').flush({ data: { updated: true } });
+    await harness.fixture.whenStable();
+    expect(TestBed.inject(Router).url).toBe('/connexion');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('annule une suppression sans appeler l’API', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('admin@example.com'))!;
+    button(row, 'Supprimer le compte').click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    button(dialog, 'Annuler').click();
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    http.expectNone('/api/admin/users');
+  });
+
+  it('annule avec Échap ou en cliquant hors de la modale', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('admin@example.com'))!;
+    button(row, 'Supprimer le compte').click();
+    harness.detectChanges();
+    document.querySelector<HTMLElement>('[role="dialog"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    button(row, 'Supprimer le compte').click();
+    harness.detectChanges();
+    document.querySelector<HTMLElement>('.cdk-overlay-backdrop')!.click();
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    http.expectNone('/api/admin/users');
+  });
+
+  it('garde la confirmation d’un participant ouverte après échec et ferme après succès', async () => {
+    const root = await open();
+    const row = Array.from(root.querySelectorAll('.entry'))
+      .find((entry) => entry.textContent?.includes('Sans compte'))!;
+    button(row, 'Supprimer le participant').click();
+    harness.detectChanges();
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Participant : Béatrice');
+    expect(dialog.textContent).not.toContain('Compte :');
+    http.expectNone('/api/admin/participants');
+    button(dialog, 'Confirmer').click();
+    const request = http.expectOne('/api/admin/participants');
+    expect(request.request.method).toBe('DELETE');
+    expect(request.request.body).toEqual({ name: 'Béatrice' });
+    request.flush({ error: { code: 'internal_error' } }, { status: 500, statusText: 'Error' });
+    harness.detectChanges();
+    expect(dialog.textContent).toContain('Opération impossible');
+    button(dialog, 'Confirmer').click();
+    http.expectOne('/api/admin/participants').flush({ data: { updated: true } });
+    http.expectOne('/api/admin/users').flush({ data });
+    harness.detectChanges();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(root.textContent).toContain('Participant supprimé.');
   });
 });
