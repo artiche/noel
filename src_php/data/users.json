@@ -6,22 +6,6 @@
             "email": "admin@example.com",
             "isAdmin": true,
             "sessionVersion": 0
-        },
-        {
-            "login": "maxime",
-            "passwordHash": "$2y$10$Kk4N14qm86nIL7ipRJdHd.0AF9nL2HpR1QciBGdwNV2FXH3ei9CjO",
-            "email": "maxime.prat@proton.me",
-            "isAdmin": true,
-            "sessionVersion": 2,
-            "accountId": "5055485c019e57b2f7a6356a34876aee"
-        },
-        {
-            "login": "valentine",
-            "passwordHash": "$2y$10$r6GKX7W77GUT5WcZSCrngOSqFWe5VKhNSc8WFWdVKQWuNF2H2mB2m",
-            "email": "noel@vergogne-zero.com",
-            "isAdmin": false,
-            "sessionVersion": 1,
-            "accountId": "b322aea6beae4c2b346556c717174184"
-        }
+        }        
     ]
 }

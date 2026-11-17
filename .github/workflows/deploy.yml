@@ -127,6 +127,8 @@ jobs:
           cp -R src_php/public src_php/src src_php/vendor "$RUNNER_TEMP/noel-api/"
           cp src_php/data/constraints.json src_php/data/history.json src_php/data/users.json src_php/data/passwordResets.json "$RUNNER_TEMP/noel-seed/"
       - name: Installer les outils SFTP
-        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client sshpass
+        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client openssh-sftp-server sshpass
+      - name: Tester le déploiement SFTP
+        run: bash .github/scripts/test-deploy-sftp.sh
       - name: Déployer par SFTP
         run: bash .github/scripts/deploy-sftp.sh
