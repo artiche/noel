@@ -137,13 +137,19 @@ try {
             : ($boundedJsonShare ? file_get_contents('php://input', false, null, 0, 131_073) : file_get_contents('php://input')));
     if (($multipartShare && (!is_string($input) || strlen($input) !== (int) $length))
         || ($boundedJsonShare && is_string($input) && strlen($input) > 131_072)) {
+        $incompleteMessage = 'Incomplete multipart body';
+        if ($multipartShare) {
+            $received = is_string($input) ? strlen($input) : 0;
+            $incompleteMessage .= " (expected={$length} received={$received})";
+            error_log("[api_error] {$method} {$path} invalid_multipart: {$incompleteMessage}");
+        }
         http_response_code($multipartShare ? 400 : 413);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
         header('Referrer-Policy: no-referrer');
         echo json_encode(['error' => [
             'code' => $multipartShare ? 'invalid_multipart' : 'share_too_large',
-            'message' => $multipartShare ? 'Incomplete multipart body' : 'Share exceeds its size limit',
+            'message' => $multipartShare ? $incompleteMessage : 'Share exceeds its size limit',
         ]]);
         exit;
     }
