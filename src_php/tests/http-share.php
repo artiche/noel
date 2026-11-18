@@ -215,6 +215,8 @@ try {
     $invalid = shareHttpRequest($api . '/share-target', 'POST', $duplicate, ['Content-Type: multipart/form-data; boundary=test-boundary']);
     assertEquals(400, $invalid['status'], 'duplicate multipart fields are rejected over HTTP');
     assertEquals('invalid_multipart', shareHttpDecode($invalid)['error']['code'], 'duplicate error is explicit');
+    assertEquals("Duplicate multipart field 'text'", shareHttpDecode($invalid)['error']['message'],
+        'duplicate multipart error explains its cause over HTTP');
     $duplicateImages = "--test-boundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"one.png\"\r\n"
         . "Content-Type: image/png\r\n\r\n" . $image . "\r\n--test-boundary\r\n"
         . "Content-Disposition: form-data; name=\"image\"; filename=\"two.png\"\r\n"

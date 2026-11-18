@@ -251,6 +251,27 @@ try {
         "--example\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nline\r\n--example-extra\r\n--example--\r\n");
     assertEquals("line\r\n--example-extra", $parsed['fields']['text'], 'boundary prefixes inside content do not split a part');
     try {
+        $parser->parse('multipart/form-data; boundary=example', "not a multipart body");
+        throw new RuntimeException('Multipart with the wrong opening boundary accepted');
+    } catch (ApiException $exception) {
+        assertEquals(
+            'Multipart body does not start with the boundary declared in Content-Type',
+            $exception->getMessage(),
+            'multipart opening boundary failure explains its cause'
+        );
+    }
+    try {
+        $parser->parse('multipart/form-data; boundary=example',
+            "--example\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\none");
+        throw new RuntimeException('Multipart without a closing boundary accepted');
+    } catch (ApiException $exception) {
+        assertEquals(
+            'Multipart body has no valid closing boundary',
+            $exception->getMessage(),
+            'multipart closing boundary failure explains its cause'
+        );
+    }
+    try {
         $draftService->imageFromBytes(str_repeat('x', 5_000_001));
         throw new RuntimeException('Oversized image accepted');
     } catch (ApiException $exception) {

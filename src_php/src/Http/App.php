@@ -561,7 +561,9 @@ final class App
 
             throw new ApiException(404, 'not_found', 'Route not found');
         } catch (ApiException $ex) {
-            if ($ex->statusCode >= 500 || ($method === 'POST' && $path === '/password/forgot')) {
+            if ($ex->statusCode >= 500
+                || ($method === 'POST' && $path === '/password/forgot')
+                || in_array($ex->errorCode, ['invalid_multipart', 'invalid_content_type'], true)) {
                 $this->logServerError($method, $path, $ex->errorCode, $ex->getMessage());
             }
             return [
