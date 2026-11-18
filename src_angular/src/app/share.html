@@ -1,0 +1,134 @@
+<mat-toolbar>
+  <span>Partage</span>
+  <span class="spacer"></span>
+  <a mat-button routerLink="/tirages">Retour aux tirages</a>
+</mat-toolbar>
+
+<main>
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      <h1>Ajouter un partage à ma wishlist</h1>
+      <p>Le partage nécessite une connexion Internet et n’est ajouté qu’après votre validation.
+        Il expire après sept jours.</p>
+      <p>Les modifications sont conservées temporairement dans cet onglet seulement ; fermer l’onglet peut les perdre.
+        L’image reste sur le serveur et n’est pas stockée dans le navigateur.</p>
+      @if (loading()) { <p role="status">Chargement du partage…</p> }
+      @if (storageError()) {
+        <p class="error" role="alert">{{ storageError() }}</p>
+        <button mat-button type="button" (click)="retryStorage()">Réessayer le stockage</button>
+      }
+      @if (fragmentError()) { <p class="error" role="alert">{{ fragmentError() }}</p> }
+      @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+      @if (message()) { <p role="status">{{ message() }}</p> }
+
+      @if (queue().items.length > 1) {
+        <nav aria-label="Partages en attente" class="pending">
+          @for (item of queue().items; track item.id; let index = $index) {
+            <button mat-button type="button" [disabled]="loading() || busy() || !!storageError()"
+              [attr.aria-current]="item.id === queue().activeId ? 'true' : null"
+              (click)="select(item.id)">Partage {{ index + 1 }}</button>
+          }
+        </nav>
+      }
+
+      @if (!queue().activeId && !loading()) {
+        <p>Aucun partage en attente dans cet onglet.</p>
+      }
+      @if (user() && !user()?.participant) {
+        <p>Le partage ne peut pas être ouvert avec ce compte. Il reste dans cet onglet.</p>
+        <a mat-button routerLink="/connexion" [queryParams]="{returnShare: '1'}">Se connecter avec un autre compte</a>
+      }
+      @if (queue().activeId && !draft() && !loading() && !unavailable() && !storageError()) {
+        @if (user()?.participant) {
+          <button mat-button type="button" [disabled]="busy()" (click)="loadActive()">Charger le partage</button>
+        } @else if (!user()) {
+          <button mat-button type="button" [disabled]="busy()" (click)="loadSession()">Réessayer la connexion</button>
+        }
+      }
+      @if (unavailable()) {
+        <p>Vous pouvez conserver ce lien pour réessayer avec le bon compte, ou le retirer de cet onglet.</p>
+        <a mat-button routerLink="/connexion" [queryParams]="{returnShare: '1'}">Changer de compte</a>
+        @if (confirmLocalRemoval()) {
+          <p>Retirer le lien et les modifications locales ? Le brouillon ne sera pas supprimé sur le serveur.</p>
+          <button mat-button type="button" (click)="removeLocal()">Confirmer le retrait local</button>
+          <button mat-button type="button" (click)="confirmLocalRemoval.set(false)">Conserver</button>
+        } @else {
+          <button mat-button type="button" (click)="confirmLocalRemoval.set(true)">Retirer de cet onglet</button>
+        }
+      }
+
+      @if (draft(); as current) {
+        <p>Brouillon {{ current.source === 'ios' ? 'iOS' : 'Android' }}, disponible jusqu’au
+          {{ current.expiresAt * 1000 | date:'dd/MM/yyyy à HH:mm' }}.</p>
+        @if (metadataLoading()) { <p role="status">Recherche du titre… Vous pouvez continuer sans attendre.</p> }
+        @if (metadataNotice()) { <p role="status">{{ metadataNotice() }}</p> }
+        @if (metadataSource()) {
+          <p>Suggestion de titre : {{ metadataSource() === 'opengraph' ? 'OpenGraph' : 'titre de la page' }}. Vous pouvez la modifier.</p>
+        }
+        <form [formGroup]="form" (ngSubmit)="submit()" class="share-form">
+          <mat-form-field>
+            <mat-label>Titre</mat-label>
+            <input matInput formControlName="title" [readonly]="busy()">
+          </mat-form-field>
+          <mat-form-field>
+            <mat-label>URL HTTP(S)</mat-label>
+            <input matInput type="url" formControlName="url" [readonly]="busy()">
+          </mat-form-field>
+          <mat-form-field>
+            <mat-label>Texte partagé</mat-label>
+            <textarea matInput formControlName="text" rows="3" [readonly]="busy()"></textarea>
+          </mat-form-field>
+          <mat-form-field>
+            <mat-label>Commentaire</mat-label>
+            <textarea matInput formControlName="comment" rows="3" [readonly]="busy()"></textarea>
+          </mat-form-field>
+          @if (current.image) {
+            <div class="image-preview">
+              <img [src]="current.image" alt="Image partagée">
+              <mat-checkbox formControlName="keepImage" [disabled]="busy()">Ajouter cette image</mat-checkbox>
+            </div>
+          }
+          @if (reviewRequired()) {
+            <p>Revoyez le partage et votre wishlist avant de réessayer.</p>
+            @if (reviewWishlist() !== null) {
+              <h2>Wishlist actualisée</h2>
+              <pre class="wishlist-preview">{{ reviewWishlist() }}</pre>
+              <button mat-button type="button" [disabled]="loading() || !!storageError()"
+                (click)="acknowledgeReview()">J’ai vérifié</button>
+            } @else if (!loading()) {
+              <button mat-button type="button" [disabled]="!!storageError()" (click)="loadReview()">Recharger la wishlist</button>
+            }
+          }
+          <div class="actions">
+            <button mat-flat-button type="submit"
+              [disabled]="busy() || loading() || !!storageError() || reviewRequired()">Valider et ajouter</button>
+            @if (confirmCancel()) {
+              <span>Supprimer définitivement ce brouillon ?</span>
+              <button mat-button type="button" [disabled]="busy()" (click)="cancel()">Confirmer l’annulation</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="confirmCancel.set(false)">Conserver</button>
+            } @else {
+              <button mat-button type="button" [disabled]="busy()" (click)="confirmCancel.set(true)">Annuler le partage</button>
+            }
+          </div>
+        </form>
+      }
+      <p><a mat-button routerLink="/wishlist">Voir ma wishlist</a></p>
+    </mat-card-content>
+  </mat-card>
+</main>
+
+<ng-template #leaveTemplate>
+  <div class="leave-dialog">
+    <h2>Partage en attente</h2>
+    @if (storageError()) {
+      <p>Le stockage a échoué. Quitter peut faire perdre le partage et vos modifications.</p>
+    } @else {
+      <p>Vos modifications ne sont pas encore enregistrées dans la wishlist.
+        Elles restent temporairement dans cet onglet. Quitter quand même ?</p>
+    }
+    <div class="actions">
+      <button mat-button type="button" [mat-dialog-close]="false">Rester</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="true">Quitter</button>
+    </div>
+  </div>
+</ng-template>

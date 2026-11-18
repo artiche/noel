@@ -1,0 +1,9 @@
+.spacer { flex: 1; }
+main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+.entry { display: flex; flex-wrap: wrap; gap: .75rem; justify-content: space-between; align-items: center; margin-top: 1rem; }
+.entry code, .new-key code { overflow-wrap: anywhere; }
+.new-key { display: grid; gap: .5rem; margin: 1rem 0; }
+.new-key textarea { box-sizing: border-box; width: 100%; resize: vertical; overflow-wrap: anywhere; }
+.new-key button { justify-self: start; }
+.leave-dialog { padding: 1.5rem; }

@@ -1,8 +1,10 @@
 RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
 # Never expose internal folders or metadata files.
 RewriteRule ^(?:src|tests|data|vendor)/ - [F,L]
 RewriteRule ^(?:composer\.(?:json|lock)|README\.md)$ - [F,L,NC]
+RewriteRule ^public/\.user\.ini$ - [F,L,NC]
 
 # Route all API requests to the front controller, including in a subdirectory.
 RewriteRule ^public/ - [L]

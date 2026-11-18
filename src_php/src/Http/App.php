@@ -10,9 +10,12 @@ use Noel\Api\Domain\AdminService;
 use Noel\Api\Domain\DrawService;
 use Noel\Api\Domain\Identity;
 use Noel\Api\Domain\PasswordResetService;
+use Noel\Api\Domain\ShareDraftService;
+use Noel\Api\Domain\ShareTokenService;
 use Noel\Api\Domain\WishlistNotifier;
 use Noel\Api\Domain\WishlistService;
 use Noel\Api\Infrastructure\JsonRepository;
+use Noel\Api\Infrastructure\OpenGraphFetcher;
 
 final class App
 {
@@ -31,7 +34,10 @@ final class App
         private readonly string $historyFilePath = 'data/history.json',
         private readonly ?string $wishlistDirectory = null,
         private readonly ?WishlistNotifier $wishlistNotifier = null,
-        private readonly string $frontendUrl = ''
+        private readonly string $frontendUrl = '',
+        private readonly ?ShareDraftService $shareDrafts = null,
+        private readonly ?ShareTokenService $shareTokens = null,
+        private readonly ?OpenGraphFetcher $metadataFetcher = null
     ) {
     }
 
@@ -41,11 +47,15 @@ final class App
      * @param array<string, string> $cookies
      * @return array{status: int, body: array<string,mixed>, cookies?: array<int, array<string,mixed>>, headers?: array<string,string>}
      */
-    public function handle(string $method, string $path, array $query, ?array $jsonBody, array $cookies = []): array
+    public function handle(string $method, string $path, array $query, ?array $jsonBody, array $cookies = [], array $request = []): array
     {
         try {
             if ($method === 'GET' && $path === '/health') {
                 return $this->ok(['status' => 'ok']);
+            }
+
+            if ($this->isSharePath($path) && ($request['secure'] ?? false) !== true) {
+                throw new ApiException(403, 'https_required', 'HTTPS is required for sharing');
             }
 
             if ($method === 'POST' && $path === '/login') {
@@ -114,7 +124,163 @@ final class App
                 return $this->redirect($this->loginRedirectUrl);
             }
 
+            if ($method === 'POST' && ($path === '/share-target' || $path === '/wish')) {
+                $this->assertShareConfigured();
+                $this->assertFrontendUrl();
+                $this->assertMultipart($request);
+                $create = function (?array $owner) use ($request, $path): array {
+                    $address = $request['remoteAddress'] ?? '';
+                    if (!is_string($address) || filter_var($address, FILTER_VALIDATE_IP) === false) {
+                        throw new ApiException(400, 'invalid_request', 'Invalid client address');
+                    }
+                    $this->shareDrafts->limit($address, time());
+                    $body = $request['body'] ?? null;
+                    if (!is_string($body)) {
+                        throw new ApiException(400, 'invalid_multipart', 'Multipart body is required');
+                    }
+                    $parsed = (new ShareMultipart())->parse($request['contentType'], $body);
+                    $image = $parsed['image'] === null ? null : $this->shareDrafts->imageFromBytes($parsed['image']);
+                    return $this->shareDrafts->create($parsed['fields'], $image, $path === '/wish' ? 'ios' : 'android',
+                        $owner, time());
+                };
+                if ($path === '/wish') {
+                    $result = $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($request, $create): array {
+                        $authorization = $request['authorization'] ?? '';
+                        if (!is_string($authorization) || preg_match('/^Bearer ([a-f0-9]{64})$/D', $authorization, $matches) !== 1) {
+                            throw new ApiException(401, 'invalid_share_token', 'Invalid share token');
+                        }
+                        $user = $this->shareTokens->authenticate($matches[1], $this->jsonRepository->loadUsers($this->usersFilePath)['users']);
+                        $this->assertParticipant($user['login']);
+                        return $create($this->shareOwner($user));
+                    });
+                    $url = rtrim($this->frontendUrl, '/') . '/partage#draft=' . $result['draftId'];
+                    return ['status' => 201, 'headers' => $this->shareHeaders(), 'body' => ['data' => $result + ['confirmationUrl' => $url]]];
+                }
+                $result = $create(null);
+                return [
+                    'status' => 303,
+                    'headers' => $this->shareHeaders() + ['Location' => rtrim($this->frontendUrl, '/') . '/partage#draft=' . $result['draftId']],
+                    'body' => ['data' => []],
+                ];
+            }
+
             $session = $this->assertAuthenticated($cookies);
+
+            if ($method === 'GET' && $path === '/share-tokens') {
+                $this->assertShareConfigured();
+                $tokens = $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($cookies): array {
+                    $session = $this->assertAuthenticated($cookies);
+                    return $this->shareTokens->list($this->shareUser($session['sub']));
+                });
+                return ['status' => 200, 'headers' => $this->shareHeaders(), 'body' => ['data' => ['tokens' => $tokens]]];
+            }
+
+            if ($method === 'POST' && $path === '/share-drafts/metadata') {
+                $this->assertShareConfigured();
+                $this->assertShareOrigin($request);
+                if ($jsonBody === null || array_keys($jsonBody) !== ['draftId']) {
+                    throw new ApiException(400, 'invalid_body', 'A draft identifier is required');
+                }
+                $id = $this->readRequiredString($jsonBody, 'draftId');
+                if (preg_match('/^[a-f0-9]{64}$/D', $id) !== 1) {
+                    throw new ApiException(400, 'invalid_share_id', 'Invalid share identifier');
+                }
+                $readDraft = function () use ($cookies, $id): array {
+                    return $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($cookies, $id): array {
+                        $session = $this->assertAuthenticated($cookies);
+                        $user = $this->shareUser($session['sub']);
+                        $this->assertParticipant($user['login']);
+                        return $this->shareDrafts->open($id, $this->shareOwner($user), time());
+                    });
+                };
+                $draft = $readDraft();
+                if ($draft['title'] !== '' || $draft['url'] === '') {
+                    $metadata = ['status' => 'not_needed', 'title' => null, 'source' => null];
+                } elseif ($this->metadataFetcher === null) {
+                    error_log('[metadata] unavailable: disabled');
+                    $metadata = ['status' => 'unavailable', 'title' => null, 'source' => null];
+                } else {
+                    $address = $request['remoteAddress'] ?? '';
+                    if (!is_string($address) || filter_var($address, FILTER_VALIDATE_IP) === false) {
+                        throw new ApiException(400, 'invalid_request', 'Invalid client address');
+                    }
+                    $this->shareDrafts->limit('metadata:' . $address, time());
+                    $metadata = $this->metadataFetcher->fetch($draft['url']);
+                    $current = $readDraft();
+                    if ($current['url'] !== $draft['url'] || $current['title'] !== $draft['title']) {
+                        throw new ApiException(409, 'share_changed', 'Share draft has changed');
+                    }
+                }
+                return ['status' => 200, 'headers' => $this->shareHeaders(), 'body' => ['data' => $metadata]];
+            }
+
+            if ($method === 'POST' && ($path === '/share-tokens' || $path === '/share-tokens/revoke'
+                || str_starts_with($path, '/share-drafts/'))) {
+                $this->assertShareConfigured();
+                $this->assertShareOrigin($request);
+                if ($jsonBody === null) {
+                    throw new ApiException(400, 'invalid_body', 'JSON body is required');
+                }
+                $result = $this->jsonRepository->withUserLock($this->usersFilePath, function () use ($cookies, $path, $jsonBody): array {
+                    $session = $this->assertAuthenticated($cookies);
+                    $user = $this->shareUser($session['sub']);
+                    if ($path === '/share-tokens') {
+                        $this->assertParticipant($user['login']);
+                        return $this->shareTokens->create($user);
+                    }
+                    if ($path === '/share-tokens/revoke') {
+                        $this->shareTokens->revoke($user, $this->readRequiredString($jsonBody, 'id'));
+                        return ['revoked' => true];
+                    }
+                    $this->assertParticipant($user['login']);
+                    $id = $this->readRequiredString($jsonBody, 'draftId');
+                    if (preg_match('/^[a-f0-9]{64}$/D', $id) !== 1) {
+                        throw new ApiException(400, 'invalid_share_id', 'Invalid share identifier');
+                    }
+                    $owner = $this->shareOwner($user);
+                    $now = time();
+                    if ($path === '/share-drafts/open') {
+                        return $this->shareDrafts->open($id, $owner, $now);
+                    }
+                    if ($path === '/share-drafts/cancel') {
+                        $this->shareDrafts->cancel($id, $owner, $now);
+                        return ['cancelled' => true];
+                    }
+                    if ($path === '/share-drafts/confirm' || $path === '/share-drafts/status') {
+                        if ($this->wishlistDirectory === null) {
+                            throw new ApiException(500, 'wishlist_config_missing', 'Wishlist storage is not configured');
+                        }
+                        $wishlist = new WishlistService($this->jsonRepository, $this->drawService, $this->wishlistDirectory,
+                            $this->constraintsFilePath, $this->historyFilePath, $this->usersFilePath,
+                            $this->wishlistNotifier, $this->frontendUrl);
+                        $confirmed = $wishlist->confirmedShare($user['login'], $id, $now);
+                        if ($path === '/share-drafts/status') {
+                            return ['confirmed' => $confirmed !== null];
+                        }
+                        if ($confirmed !== null) {
+                            $this->shareDrafts->discardConfirmed($id, $owner);
+                            return $confirmed;
+                        }
+                        $revision = $this->readRequiredString($jsonBody, 'revision');
+                        return $this->shareDrafts->withClaimed($id, $owner, $now, function (array $draft) use ($jsonBody, $wishlist, $user, $id, $revision, $now): array {
+                            $fields = [];
+                            foreach (['title', 'url', 'text'] as $name) {
+                                $fields[$name] = array_key_exists($name, $jsonBody) ? $jsonBody[$name] : $draft[$name];
+                            }
+                            $keepImage = $jsonBody['keepImage'] ?? true;
+                            if (!is_bool($keepImage)) {
+                                throw new ApiException(400, 'invalid_share', 'Invalid image selection');
+                            }
+                            $content = $this->shareDrafts->normalize($fields, $keepImage ? $draft['image'] : null);
+                            $result = $wishlist->confirmShare($user['login'], $id, $content, $revision, $draft['expiresAt'], $now);
+                            $this->shareDrafts->delete($id);
+                            return $result;
+                        });
+                    }
+                    throw new ApiException(404, 'not_found', 'Route not found');
+                });
+                return ['status' => 200, 'headers' => $this->shareHeaders(), 'body' => ['data' => $result]];
+            }
 
             if ($method === 'GET' && $path === '/session') {
                 $users = $this->jsonRepository->loadUsers($this->usersFilePath)['users'];
@@ -400,8 +566,8 @@ final class App
             }
             return [
                 'status' => $ex->statusCode,
-                ...($path === '/wishlist' || str_starts_with($path, '/wishlist/')
-                    ? ['headers' => ['Cache-Control' => 'no-store']] : []),
+                ...($path === '/wishlist' || str_starts_with($path, '/wishlist/') || $this->isSharePath($path)
+                    ? ['headers' => $this->shareHeaders()] : []),
                 'body' => [
                     'error' => [
                         'code' => $ex->errorCode,
@@ -413,8 +579,8 @@ final class App
             $this->logServerError($method, $path, 'unhandled_exception', $ex->getMessage(), $ex);
             return [
                 'status' => 500,
-                ...($path === '/wishlist' || str_starts_with($path, '/wishlist/')
-                    ? ['headers' => ['Cache-Control' => 'no-store']] : []),
+                ...($path === '/wishlist' || str_starts_with($path, '/wishlist/') || $this->isSharePath($path)
+                    ? ['headers' => $this->shareHeaders()] : []),
                 'body' => [
                     'error' => [
                         'code' => 'internal_error',
@@ -459,6 +625,84 @@ final class App
         $response = $this->ok($data);
         $response['cookies'] = $cookies;
         return $response;
+    }
+
+    private function assertShareConfigured(): void
+    {
+        if ($this->shareDrafts === null || $this->shareTokens === null) {
+            throw new ApiException(500, 'share_config_missing', 'Share storage is not configured');
+        }
+    }
+
+    private function assertFrontendUrl(): void
+    {
+        $parts = parse_url($this->frontendUrl);
+        if (!is_array($parts) || strtolower($parts['scheme'] ?? '') !== 'https'
+            || !isset($parts['host']) || isset($parts['user']) || isset($parts['pass'])
+            || isset($parts['query']) || isset($parts['fragment'])
+            || preg_match('/[\x00-\x20\x7f]/', $this->frontendUrl) === 1) {
+            throw new ApiException(500, 'share_config_invalid', 'Share frontend URL must be HTTPS');
+        }
+    }
+
+    /** @param array<string,mixed> $request */
+    private function assertShareOrigin(array $request): void
+    {
+        $this->assertFrontendUrl();
+        $parts = parse_url($this->frontendUrl);
+        $origin = 'https://' . strtolower($parts['host'])
+            . (isset($parts['port']) && $parts['port'] !== 443 ? ':' . $parts['port'] : '');
+        if (!is_string($request['origin'] ?? null) || !hash_equals($origin, $request['origin'])) {
+            throw new ApiException(403, 'invalid_origin', 'Invalid request origin');
+        }
+    }
+
+    /** @param array<string,mixed> $request */
+    private function assertMultipart(array $request): void
+    {
+        $contentType = $request['contentType'] ?? '';
+        if (!is_string($contentType) || preg_match('/^multipart\/form-data\s*;/i', $contentType) !== 1) {
+            throw new ApiException(415, 'invalid_content_type', 'Multipart form data is required');
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function shareUser(string $login): array
+    {
+        foreach ($this->jsonRepository->loadUsers($this->usersFilePath)['users'] as $user) {
+            if ($user['login'] === $login) {
+                return $user;
+            }
+        }
+        throw new ApiException(401, 'invalid_token', 'Session has been revoked');
+    }
+
+    private function assertParticipant(string $login): void
+    {
+        foreach ($this->jsonRepository->loadConstraints($this->constraintsFilePath)['users'] as $participant) {
+            if (Identity::normalize($participant) === Identity::normalize($login)) {
+                return;
+            }
+        }
+        throw new ApiException(403, 'participant_required', 'A participant account is required');
+    }
+
+    /** @param array<string,mixed> $user @return array{login:string,accountId:string|null} */
+    private function shareOwner(array $user): array
+    {
+        return ['login' => $user['login'], 'accountId' => $user['accountId'] ?? null];
+    }
+
+    /** @return array<string,string> */
+    private function shareHeaders(): array
+    {
+        return ['Cache-Control' => 'no-store', 'Referrer-Policy' => 'no-referrer'];
+    }
+
+    private function isSharePath(string $path): bool
+    {
+        return $path === '/share-target' || $path === '/wish' || $path === '/share-tokens'
+            || str_starts_with($path, '/share-tokens/') || str_starts_with($path, '/share-drafts/');
     }
 
     /** @param array<string, string> $cookies @return array<string,mixed> */

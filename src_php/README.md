@@ -6,6 +6,8 @@ Version PHP (sans framework) du moteur de tirage, dans `src_php/`.
 
 - PHP 8.2+
 - Extensions PHP `intl` et `mbstring` (normalisation des identifiants Unicode)
+- Pour les suggestions de titre : extensions `curl` et `dom`, cURL 7.59+
+  avec verification TLS, et PHP CLI accessible via `proc_open` sur Linux.
 - Fichier `src_php/data/config.php` (template versionne, obligatoire)
 - Fichier `src_php/data/config.local.php` (optionnel, non versionne, recommande pour les secrets)
 
@@ -14,7 +16,7 @@ Version PHP (sans framework) du moteur de tirage, dans `src_php/`.
 Depuis la racine du repository:
 
 ```powershell
-php -S 127.0.0.1:8080 -t src_php/public
+php -d enable_post_data_reading=0 -S 127.0.0.1:8080 -t src_php/public src_php/public/index.php
 ```
 
 Avant de lancer l'API, laissez `config.php` en template et creez
@@ -132,6 +134,174 @@ Pour ces tailles, autoriser des requetes JSON d'au moins 29 Mio dans le serveur
 web/proxy et prevoir suffisamment de memoire PHP (512 Mio recommandes). La
 limite applicative des requetes est de 29 Mio ; un `413` signale un depassement.
 Les reponses wishlist ne doivent pas etre mises en cache.
+
+### Brouillons de partage
+
+L'API peut recevoir un partage mais ne modifie la wishlist qu'apres
+confirmation authentifiee dans l'ecran Angular `/partage`. Le manifest declare
+le partage Android pour les navigateurs compatibles ; iOS necessite un
+Raccourci. Voir le README Angular pour le parcours et ses limites.
+
+Deux points d'entree acceptent `multipart/form-data` avec les champs texte
+`title`, `url` et `text`, et au plus un fichier `image`. Il faut transmettre au
+moins une URL HTTP(S), du texte ou une image. Si `url` est vide, une URL HTTP(S)
+presente dans `text` est extraite et le reste est conserve. Les champs sont du
+texte brut, jamais du HTML. Les doublons et fichiers multiples sont rejetes.
+
+- `POST /share-target` est public et destine a Android. Il repond `303` vers
+  `<frontend_url>/partage#draft=<identifiant>`, sans utiliser de cookie ni
+  enregistrer de wishlist. Au premier `open` authentifie, le brouillon est lie
+  au compte courant.
+- `POST /wish` est destine au Raccourci iOS. Il requiert l'en-tete
+  `Authorization: Bearer <cle-personnelle>` et retourne `201` avec
+  `data.draftId`, `data.expiresAt` (timestamp Unix) et `data.confirmationUrl`
+  contenant l'identifiant en fragment. Le brouillon appartient au compte de
+  la cle et n'est accessible qu'a ce compte.
+
+Depuis le menu utilisateur Angular, l'ecran **Clés de partage** permet de creer
+et revoquer des cles. Pour utiliser directement l'API, un participant connecte
+appelle `POST /share-tokens` avec le corps JSON `{}`. La reponse contient
+`data.id` et `data.token` ; le token est affiche une seule fois et seul son
+hash est stocke. `GET /share-tokens` liste seulement les `id` et `createdAt`
+(timestamp Unix, ou `null` pour les anciennes cles), jamais le secret ni son
+hash. `POST /share-tokens/revoke` avec `{"id":"..."}` revoque une cle. Un
+compte qui n'est plus participant peut toujours lister et revoquer ses cles,
+mais ne peut plus en creer ni envoyer de partage. Dix cles actives au maximum
+sont autorisees par compte.
+Les requetes par cookie de cette section exigent l'en-tete `Origin` correspondant
+a l'origine HTTPS de `frontend_url`. Les cles autorisent uniquement la creation
+de brouillons ; elles cessent notamment de fonctionner apres revocation,
+suppression du compte, changement ou reinitialisation du mot de passe, y
+compris lors d'un changement par un administrateur. Apres un tel changement,
+generer une nouvelle cle et mettre a jour l'en-tete du Raccourci. Ne pas
+inclure les cles dans les URL, journaux ou fichiers versionnes.
+
+Exemple de contrat iOS, ou le client genere la frontiere multipart :
+
+```http
+POST /noel/api/wish HTTP/1.1
+Authorization: Bearer <cle-personnelle>
+Content-Type: multipart/form-data; boundary=<frontiere-generee>
+
+title = Livre
+url = https://exemple.fr/produit
+text = Mon commentaire
+image = <fichier PNG, JPEG, GIF ou WebP facultatif>
+```
+
+Le compte connecte utilise `POST /share-drafts/open` avec
+`{"draftId":"..."}` pour recuperer et, pour Android, associer le brouillon.
+`POST /share-drafts/cancel` avec le meme corps le supprime.
+`POST /share-drafts/confirm` prend `draftId`, la `revision` retournee par
+`GET /wishlist`, et eventuellement `title`, `url`, `text` et `keepImage`
+(booleen, `true` par defaut). Il ajoute le partage a la wishlist existante ;
+en cas de revision obsolete, `409 wishlist_changed` conserve le brouillon.
+La reponse comprend `revision` et `alreadyConfirmed`. Une nouvelle tentative
+avec le meme identifiant ne duplique pas le souhait, meme apres la suppression
+du brouillon. Les droits du participant et du proprietaire sont revérifies.
+`POST /share-drafts/status` avec le meme `draftId` renvoie
+`data.confirmed` pour le participant courant, sans modifier la wishlist ni le
+brouillon. Il permet de retrouver une confirmation dont la reponse a ete
+perdue ; il ne revele pas les confirmations des autres comptes.
+`POST /share-drafts/metadata` avec `{"draftId":"..."}` exige la meme session,
+le participant, l'origine et le proprietaire. Il utilise uniquement l'URL
+enregistree dans le brouillon, sans champ URL fourni par le client, et
+retourne `status` : `found` avec `title` et `source` (`opengraph` ou `html`),
+`none`, `not_needed` ou `unavailable` (avec `title` et `source` a `null`).
+La suggestion ne modifie ni le brouillon ni la wishlist ; le titre accepte
+doit etre envoye lors de la confirmation.
+
+Pour un partage sans titre, l'interface lance cette recherche apres ouverture
+authentifiee, sans empecher la saisie ou la confirmation. Le serveur contacte
+l'URL partagee, y compris son chemin et sa requete, et, le cas echeant, ses
+redirections. Ne pas partager d'URL contenant un secret. Le fragment est
+retire ; aucun cookie ni jeton de l'application n'est transmis et aucune
+image distante n'est importee. Seules les pages HTML sont lues :
+priorite a `og:title`, puis a `<title>`, avec titre limite a 4 096 octets.
+La requete est bornee a cinq secondes au total, trois redirections, 32 Kio
+d'en-tetes et 256 Kio de corps. Seuls HTTP sur le port 80 et HTTPS sur le
+port 443 sont autorises. Toutes les adresses IPv4 et IPv6 issues du DNS sont
+controlees, les reseaux non publics refuses, et la connexion est epinglee a
+une adresse verifiee ; chaque redirection est controlee a nouveau. La
+verification TLS reste active et aucun proxy n'est utilise. Les recherches
+sont limitees a 20 par heure par adresse cliente directe, independamment des
+limites de creation de brouillons.
+
+La resolution DNS s'effectue dans un processus PHP CLI separe pour respecter
+le delai maximal. `share_metadata_enabled` vaut `true` par defaut : definir
+`false` dans `data/config.local.php` pour desactiver cette sortie reseau.
+`share_metadata_dns_php` vaut `php` par defaut ; si necessaire, indiquer le
+chemin absolu du binaire PHP CLI. Verifier sur IONOS la disponibilite des
+extensions, de cURL recent avec TLS, de `proc_open`/`proc_terminate`, de
+PHP CLI et des connexions sortantes. Si ces garanties ne sont pas disponibles,
+la recherche est indisponible sans contourner les controles : le brouillon
+reste utilisable et l'interface propose la saisie manuelle. Les journaux
+indiquent les echecs sans enregistrer l'URL partagee.
+Avec le workflow GitHub Actions, `config.local.php` est regenere a chaque
+deploiement : utiliser plutot les variables d'environnement GitHub
+`SHARE_METADATA_ENABLED` et `SHARE_METADATA_DNS_PHP` pour conserver ces
+reglages.
+
+Les reponses et erreurs de ces routes portent `Cache-Control: no-store` et
+`Referrer-Policy: no-referrer`. Les identifiants sont des capacites secretes :
+ne pas journaliser les corps ni les en-tetes `Location`. L'interface retire le
+fragment de la barre d'adresse et conserve temporairement la capacite et les
+edits textuels dans le stockage de l'onglet, sans y copier l'image. `400` signale un
+partage invalide, `401` une session ou cle invalide, `403` une origine ou des
+droits invalides, `404` un brouillon absent, `410` un brouillon expire, `413`
+un depassement, `415` un type multipart invalide et `429` une limite atteinte.
+Les erreurs conservent le format `{"error":{"code":"...","message":"..."}}`.
+
+Les brouillons expirent sept jours apres leur creation. Les fichiers JSON et
+les images integrees sont dans `share_draft_directory` (`data/share-drafts`
+par defaut), et les empreintes des cles dans `share_tokens_file_path`
+(`data/share-tokens.json`). Ces chemins doivent etre prives, inscriptibles par
+PHP, exclus du versionnement et des acces HTTP directs. Le deploiement conserve
+`data/`. Prevoir des sauvegardes privees appropriees et ne pas inclure les
+brouillons ou cles dans des fichiers publics.
+
+Chaque adresse cliente directe est limitee a 20 tentatives de creation par
+heure ; les brouillons et fichiers temporaires sont limites ensemble a
+128 fichiers et 128 000 000 octets, y compris les expirés non purges. Une
+adresse de proxy partagee est soumise a la meme limite ; les en-tetes
+`X-Forwarded-For` ne sont pas utilises. Le nettoyage opportuniste supprime au
+plus dix fichiers expires par creation. Programmer aussi une tache reguliere,
+par exemple toutes les heures, pour supprimer les brouillons expires sans
+attendre de nouvelle requete :
+
+```sh
+php /chemin/vers/api/src/cleanup-share-drafts.php
+```
+
+Verifier que l'offre IONOS permet cette planification et surveiller les erreurs
+de la tache ; l'expiration reste appliquee meme si le nettoyage echoue.
+Tester la restauration des sauvegardes privees de `data/` et de la
+configuration : aucune sauvegarde n'est realisee automatiquement.
+
+La lecture multipart impose `enable_post_data_reading=0` avant l'execution de
+PHP : `public/.user.ini` le demande sur PHP CGI/FPM. Verifier que l'hebergement
+honore ce fichier ; sinon configurer cette directive au niveau serveur. Les
+routes de partage repondent explicitement `503 share_multipart_unavailable`
+si elle n'est pas appliquee. Le serveur PHP de developpement necessite le
+parametre `-d` ci-dessus. Les autres endpoints JSON restent inchanges.
+Les routes de partage exigent HTTPS. Pour le serveur de developpement local
+uniquement, on peut definir `'share_allow_insecure_local' => true` dans
+`data/config.local.php` ; cette exception ne s'applique qu'aux requetes dont
+l'adresse directe est loopback. Ne pas l'activer en production, en particulier
+derriere un proxy local. Le serveur ne fait pas confiance aux en-tetes
+`X-Forwarded-Proto` ; verifier que l'hebergement transmet correctement a PHP
+l'etat HTTPS.
+`post_max_size` et toute limite du serveur/proxy doivent permettre au moins
+5 200 000 octets ; l'API impose elle-meme cette limite multipart, une longueur
+`Content-Length`, 5 000 000 octets par image, 131 072 octets pour les requetes
+JSON de partage et les limites wishlist existantes. La validation est effectuee
+sur les octets reels, sans utiliser `upload_max_filesize` ni le MIME annonce.
+Une limite inferieure de l'hebergement peut empecher le transfert avant PHP.
+Avant mise en service, verifier sur l'hebergement reel que `.user.ini` est
+effectivement applique, que `Authorization` arrive a PHP, que le statut HTTPS
+est correct et que la tache planifiee fonctionne. Tester le Raccourci et le
+partage Android sur appareils reels ; les tests locaux ne prouvent pas leur
+compatibilite avec une version particuliere d'iOS, de navigateur ou d'IONOS.
 
 La wishlist survit aux changements d'annee et a la suppression du seul compte.
 La suppression du participant supprime sa wishlist et les images integrees ;
@@ -401,3 +571,8 @@ Un template est fourni dans [config.local.php.example](/workspaces/noel/src_php/
 ```powershell
 php src_php/tests/run.php
 ```
+
+Les tests HTTP lancent un serveur PHP local avec des fichiers temporaires
+isoles. Ils necessitent l'extension PHP `curl`, `proc_open`, le droit de creer
+des liens symboliques et un port loopback disponible ; sous Windows, la
+creation de liens peut necessiter une autorisation particuliere.

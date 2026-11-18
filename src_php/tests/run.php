@@ -355,5 +355,8 @@ unlink($tempConstraintsFile);
 
 require __DIR__ . '/admin.php';
 require __DIR__ . '/wishlist.php';
+require __DIR__ . '/metadata.php';
+require __DIR__ . '/share.php';
+require __DIR__ . '/http-share.php';
 
 echo "All src_php tests passed.\n";

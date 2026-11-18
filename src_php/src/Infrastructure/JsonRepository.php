@@ -259,6 +259,7 @@ final class JsonRepository
         if ($lock === false) {
             throw new ApiException(500, 'io_error', 'Cannot open user data lock');
         }
+
         try {
             if (!flock($lock, LOCK_EX)) {
                 throw new ApiException(500, 'io_error', 'Cannot acquire user data lock');
@@ -267,6 +268,44 @@ final class JsonRepository
         } finally {
             fclose($lock);
         }
+    }
+
+    /** @return array{tokens:array<int,array<string,mixed>>} */
+    public function loadShareTokens(string $path): array
+    {
+        $fullPath = $this->resolvePath($path);
+        if (!is_file($fullPath)) {
+            return ['tokens' => []];
+        }
+        $data = $this->decodeJsonFile($fullPath);
+        if (!isset($data['tokens']) || !is_array($data['tokens']) || !array_is_list($data['tokens'])) {
+            throw new ApiException(500, 'share_token_storage_error', 'Invalid share token storage');
+        }
+        $ids = [];
+        $hashes = [];
+        foreach ($data['tokens'] as $token) {
+            if (!is_array($token)
+                || !is_string($token['id'] ?? null) || preg_match('/^[a-f0-9]{32}$/D', $token['id']) !== 1
+                || !is_string($token['hash'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $token['hash']) !== 1
+                || !is_string($token['login'] ?? null) || trim($token['login']) === ''
+                || !array_key_exists('accountId', $token)
+                || ($token['accountId'] !== null && (!is_string($token['accountId'])
+                    || preg_match('/^[a-f0-9]{32}$/D', $token['accountId']) !== 1))
+                || !is_int($token['sessionVersion'] ?? null) || $token['sessionVersion'] < 0
+                || (array_key_exists('createdAt', $token) && (!is_int($token['createdAt']) || $token['createdAt'] < 0))
+                || isset($ids[$token['id']]) || isset($hashes[$token['hash']])) {
+                throw new ApiException(500, 'share_token_storage_error', 'Invalid share token storage');
+            }
+            $ids[$token['id']] = true;
+            $hashes[$token['hash']] = true;
+        }
+        return $data;
+    }
+
+    /** @param array{tokens:array<int,array<string,mixed>>} $data */
+    public function saveShareTokens(string $path, array $data): void
+    {
+        $this->saveJson($path, $data);
     }
 
     /** @return array<string,mixed>|null */

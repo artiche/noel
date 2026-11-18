@@ -74,6 +74,14 @@ try {
     check(file_get_contents($directory . '/output') === "base_href=/noel/\n", 'Incorrect Angular base href');
     checkRewriteBase($directory, '/noel/', '/noel/api/');
 
+    [$status, , $stderr] = runPreparation(array_replace($env, [
+        'SHARE_METADATA_ENABLED' => 'false', 'SHARE_METADATA_DNS_PHP' => '/usr/bin/php8.2',
+    ]));
+    check($status === 0, 'Metadata configuration failed: ' . $stderr);
+    $config = require $directory . '/noel-config.local.php';
+    check($config['share_metadata_enabled'] === false && $config['share_metadata_dns_php'] === '/usr/bin/php8.2',
+        'Metadata configuration was not retained');
+
     unlink($directory . '/output');
     [$status, , $stderr] = runPreparation(array_replace($env, ['SITE_URL' => 'https://example.test/']));
     check($status === 0, 'Root configuration failed: ' . $stderr);
@@ -88,6 +96,8 @@ try {
         ['SFTP_REMOTE_ROOT' => '/site/../other'],
         ['SMTP_PORT' => '70000'],
         ['JWT_SECRET' => 'change-me-placeholder-that-is-over-32-bytes'],
+        ['SHARE_METADATA_ENABLED' => 'yes'],
+        ['SHARE_METADATA_DNS_PHP' => 'php -r something'],
     ] as $invalid) {
         [$status] = runPreparation(array_replace($env, $invalid));
         check($status !== 0, 'Invalid configuration was accepted: ' . implode(', ', array_keys($invalid)));

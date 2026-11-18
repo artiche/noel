@@ -1,4 +1,5 @@
 import { provideHttpClient } from '@angular/common/http';
+import { DOCUMENT } from '@angular/common';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { Api, Draw, FIRST_YEAR } from './api';
@@ -17,6 +18,7 @@ describe('API des tirages', () => {
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting()],
     });
+
     api = TestBed.inject(Api);
     http = TestBed.inject(HttpTestingController);
   });
@@ -55,6 +57,45 @@ describe('API des tirages', () => {
       data: { authenticated: true, isAdmin: false, login: 'alice', email: 'alice@example.com',
         participant: 'Alice', participantKey: null },
     });
+
+    expect(failed).toBe(true);
+  });
+
+  it('refuse des réponses de clés invalides au lieu de les présenter comme utilisables', () => {
+    let failed = false;
+    api.shareTokens().subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-tokens').flush({ data: { tokens: [{ id: 'invalid', createdAt: null }] } });
+    expect(failed).toBe(true);
+    failed = false;
+    api.createShareToken().subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-tokens').flush({ data: { id: 'a'.repeat(32), token: 'bad' } });
+    expect(failed).toBe(true);
+    failed = false;
+    api.revokeShareToken('a'.repeat(32)).subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-tokens/revoke').flush({ data: { revoked: false } });
+    expect(failed).toBe(true);
+  });
+
+  it('refuse les réponses de partage invalides sans les considérer comme des succès', () => {
+    let failed = false;
+    api.openSharedDraft('a'.repeat(64)).subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-drafts/open').flush({
+      data: { title: '', url: '', text: 'texte', image: 'data:image/svg+xml;base64,YQ==',
+        source: 'android', expiresAt: 2000000000 },
+    });
+    expect(failed).toBe(true);
+    failed = false;
+    api.confirmSharedDraft('a'.repeat(64), 'b'.repeat(64),
+      { title: '', url: '', text: 'texte', keepImage: false }).subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-drafts/confirm').flush({ data: { revision: 'invalid', alreadyConfirmed: true } });
+    expect(failed).toBe(true);
+    failed = false;
+    api.sharedDraftStatus('a'.repeat(64)).subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-drafts/status').flush({ data: { confirmed: 'yes' } });
+    expect(failed).toBe(true);
+    failed = false;
+    api.sharedDraftMetadata('a'.repeat(64)).subscribe({ error: () => failed = true });
+    http.expectOne('/api/share-drafts/metadata').flush({ data: { status: 'found', title: 'Titre', source: 'unsafe' } });
     expect(failed).toBe(true);
   });
 
@@ -100,5 +141,21 @@ describe('API des tirages', () => {
     http.expectOne('/api/draw/2024').flush(body, { status, statusText: 'Error' });
     expect(receivedError).toBe(true);
     http.expectNone('/api/draw/2023');
+  });
+});
+
+describe('API selon le chemin de base', () => {
+  it.each(['/', '/noel/'])('résout les requêtes de partage sous %s', (base) => {
+    const doc = document.implementation.createHTMLDocument();
+    const element = doc.createElement('base');
+    element.href = `https://example.test${base}`;
+    doc.head.appendChild(element);
+    TestBed.configureTestingModule({
+      providers: [{ provide: DOCUMENT, useValue: doc }, provideHttpClient(), provideHttpClientTesting()],
+    });
+    const http = TestBed.inject(HttpTestingController);
+    TestBed.inject(Api).sharedDraftStatus('a'.repeat(64)).subscribe();
+    http.expectOne(`${base}api/share-drafts/status`).flush({ data: { confirmed: false } });
+    http.verify();
   });
 });

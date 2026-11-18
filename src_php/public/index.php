@@ -7,9 +7,14 @@ use Noel\Api\Domain\EdgeScoreCalculator;
 use Noel\Api\Domain\AuthService;
 use Noel\Api\Domain\JwtService;
 use Noel\Api\Domain\PasswordResetService;
+use Noel\Api\Domain\ShareDraftService;
+use Noel\Api\Domain\ShareTokenService;
 use Noel\Api\Domain\WeightedBipartiteMatcher;
 use Noel\Api\Http\App;
 use Noel\Api\Infrastructure\JsonRepository;
+use Noel\Api\Infrastructure\CurlMetadataNetwork;
+use Noel\Api\Infrastructure\OpenGraphFetcher;
+use Noel\Api\Infrastructure\ShareDraftStore;
 use Noel\Api\Infrastructure\SmtpPasswordResetNotifier;
 
 require_once dirname(__DIR__) . '/src/Bootstrap.php';
@@ -41,6 +46,17 @@ try {
     $passwordResetsFilePath = readRequiredConfigString($config, 'password_resets_file_path');
     $wishlistDirectory = readRequiredConfigString($config, 'wishlist_directory');
     $frontendUrl = readRequiredConfigString($config, 'frontend_url');
+    $shareDirectory = readRequiredConfigString($config, 'share_draft_directory');
+    $shareTokensFilePath = readRequiredConfigString($config, 'share_tokens_file_path');
+    $allowInsecureShare = $config['share_allow_insecure_local'] ?? false;
+    if (!is_bool($allowInsecureShare)) {
+        throw new RuntimeException('Invalid share_allow_insecure_local configuration');
+    }
+    $metadataEnabled = $config['share_metadata_enabled'] ?? true;
+    if (!is_bool($metadataEnabled)) {
+        throw new RuntimeException('Invalid share_metadata_enabled configuration');
+    }
+    $metadataPhp = readRequiredConfigString($config, 'share_metadata_dns_php');
 
     $jwtService = new JwtService($jwtSecret);
     $authService = new AuthService($jwtService);
@@ -68,7 +84,10 @@ try {
         'data/history.json',
         $wishlistDirectory,
         $mailNotifier,
-        $frontendUrl
+        $frontendUrl,
+        new ShareDraftService(new ShareDraftStore(resolveStoragePath($shareDirectory))),
+        new ShareTokenService($repository, $shareTokensFilePath),
+        $metadataEnabled ? new OpenGraphFetcher(new CurlMetadataNetwork($metadataPhp)) : null
     );
 
     $rawPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
@@ -81,9 +100,53 @@ try {
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     $query = $_GET;
     $inputLimit = 29 * 1024 * 1024;
-    $input = $method === 'PUT' && $path === '/wishlist'
-        ? file_get_contents('php://input', false, null, 0, $inputLimit + 1)
-        : file_get_contents('php://input');
+    $multipartShare = $method === 'POST' && ($path === '/share-target' || $path === '/wish');
+    if ($multipartShare) {
+        $length = $_SERVER['CONTENT_LENGTH'] ?? null;
+        $postLimit = ini_parse_quantity((string) ini_get('post_max_size'));
+        if (!is_string($length) || !ctype_digit($length)) {
+            http_response_code(411);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            header('Referrer-Policy: no-referrer');
+            echo json_encode(['error' => ['code' => 'length_required', 'message' => 'Content length is required']]);
+            exit;
+        }
+        if ((int) $length > 5_200_000 || ($postLimit > 0 && (int) $length > $postLimit)) {
+            http_response_code(413);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            header('Referrer-Policy: no-referrer');
+            echo json_encode(['error' => ['code' => 'share_too_large', 'message' => 'Share exceeds its size limit']]);
+            exit;
+        }
+        if (filter_var(ini_get('enable_post_data_reading'), FILTER_VALIDATE_BOOLEAN)) {
+            http_response_code(503);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            header('Referrer-Policy: no-referrer');
+            echo json_encode(['error' => ['code' => 'share_multipart_unavailable', 'message' => 'Multipart handling is not configured']]);
+            exit;
+        }
+    }
+    $boundedJsonShare = $method === 'POST' && ($path === '/share-tokens'
+        || str_starts_with($path, '/share-tokens/') || str_starts_with($path, '/share-drafts/'));
+    $input = $multipartShare ? file_get_contents('php://input', false, null, 0, 5_200_001)
+        : ($method === 'PUT' && $path === '/wishlist'
+            ? file_get_contents('php://input', false, null, 0, $inputLimit + 1)
+            : ($boundedJsonShare ? file_get_contents('php://input', false, null, 0, 131_073) : file_get_contents('php://input')));
+    if (($multipartShare && (!is_string($input) || strlen($input) !== (int) $length))
+        || ($boundedJsonShare && is_string($input) && strlen($input) > 131_072)) {
+        http_response_code($multipartShare ? 400 : 413);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        header('Referrer-Policy: no-referrer');
+        echo json_encode(['error' => [
+            'code' => $multipartShare ? 'invalid_multipart' : 'share_too_large',
+            'message' => $multipartShare ? 'Incomplete multipart body' : 'Share exceeds its size limit',
+        ]]);
+        exit;
+    }
     if ($method === 'PUT' && $path === '/wishlist' && is_string($input) && strlen($input) > $inputLimit) {
         http_response_code(413);
         header('Content-Type: application/json; charset=utf-8');
@@ -92,14 +155,24 @@ try {
         exit;
     }
     $jsonBody = null;
-    if (is_string($input) && $input !== '') {
+    if (!$multipartShare && is_string($input) && $input !== '') {
         $decoded = json_decode($input, true);
         if (is_array($decoded)) {
             $jsonBody = $decoded;
         }
     }
 
-    $response = $app->handle($method, $path, $query, $jsonBody, $_COOKIE);
+    $request = [
+        'contentType' => $_SERVER['CONTENT_TYPE'] ?? '',
+        'body' => $multipartShare ? $input : null,
+        'remoteAddress' => $_SERVER['REMOTE_ADDR'] ?? '',
+        'authorization' => $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '',
+        'origin' => $_SERVER['HTTP_ORIGIN'] ?? '',
+        'secure' => in_array(strtolower((string) ($_SERVER['HTTPS'] ?? '')), ['on', '1'], true)
+            || strtolower((string) ($_SERVER['REQUEST_SCHEME'] ?? '')) === 'https'
+            || ($allowInsecureShare && in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)),
+    ];
+    $response = $app->handle($method, $path, $query, $jsonBody, $_COOKIE, $request);
 
     foreach ($response['cookies'] ?? [] as $cookie) {
         setcookie(
@@ -134,6 +207,11 @@ try {
         ],
         JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
     );
+}
+
+function resolveStoragePath(string $path): string
+{
+    return str_starts_with($path, '/') ? $path : dirname(__DIR__) . '/' . $path;
 }
 
 function normalizeBasePath(string $basePath): string

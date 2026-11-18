@@ -90,16 +90,21 @@ jobs:
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_FROM_EMAIL: ${{ secrets.SMTP_FROM_EMAIL }}
       SMTP_FROM_NAME: ${{ secrets.SMTP_FROM_NAME }}
+      SHARE_METADATA_ENABLED: ${{ vars.SHARE_METADATA_ENABLED }}
+      SHARE_METADATA_DNS_PHP: ${{ vars.SHARE_METADATA_DNS_PHP }}
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: intl, mbstring
+          extensions: intl, mbstring, curl, dom
           tools: composer:v2
           coverage: none
       - name: Tester la génération de la configuration
         run: php .github/scripts/test-prepare-deploy.php
+      - name: Tester l'API
+        if: env.DEPLOY_API == 'true'
+        run: php src_php/tests/run.php
       - name: Valider les paramètres et préparer la configuration
         id: config
         run: php .github/scripts/prepare-deploy.php
@@ -116,7 +121,9 @@ jobs:
           BASE_HREF: ${{ steps.config.outputs.base_href }}
         run: |
           npm ci
+          npm test -- --watch=false
           npm run build -- --configuration production --base-href "$BASE_HREF"
+          npm run test:pwa -- "$BASE_HREF"
           cp "$RUNNER_TEMP/noel-ui.htaccess" dist/noel/browser/.htaccess
       - name: Préparer l'API
         if: env.DEPLOY_API == 'true'

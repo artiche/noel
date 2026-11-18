@@ -54,13 +54,62 @@ final class WishlistService
         $participant = $this->participant($login);
         $identity = Identity::normalize($participant);
         $revision = $body['revision'] ?? null;
-        if (!is_string($revision) || !hash_equals($this->revision($this->document($identity)['ops']), $revision)) {
+        $document = $this->document($identity);
+        if (!is_string($revision) || !hash_equals($this->revision($document['ops']), $revision)) {
             throw new ApiException(409, 'wishlist_changed', 'Wishlist has changed since it was loaded');
         }
         $ops = $body['ops'] ?? null;
         $this->validateOps($ops);
-        $this->repository->saveWishlist($this->directory, $identity, ['ops' => $ops]);
+        $this->repository->saveWishlist($this->directory, $identity, [
+            'ops' => $ops, 'confirmedShares' => $this->activeConfirmations($document['confirmedShares'], time()),
+        ]);
         return ['revision' => $this->revision($ops)];
+    }
+
+    /** @param array<string,mixed> $share @return array{revision:string,alreadyConfirmed:bool} */
+    public function confirmShare(string $login, string $id, array $share, string $revision, int $expiresAt, int $now): array
+    {
+        $identity = Identity::normalize($this->participant($login));
+        $document = $this->document($identity);
+        $confirmed = $this->activeConfirmations($document['confirmedShares'], $now);
+        $key = hash('sha256', $id);
+        if (isset($confirmed[$key])) {
+            return ['revision' => $this->revision($document['ops']), 'alreadyConfirmed' => true];
+        }
+        if (!hash_equals($this->revision($document['ops']), $revision)) {
+            throw new ApiException(409, 'wishlist_changed', 'Wishlist has changed since it was loaded');
+        }
+        $ops = $document['ops'];
+        $ops[] = ['insert' => "\n"];
+        if ($share['title'] !== '') {
+            $ops[] = ['insert' => $share['title'] . "\n"];
+        }
+        if ($share['url'] !== '') {
+            $ops[] = ['insert' => $share['url'], 'attributes' => ['link' => $share['url']]];
+            $ops[] = ['insert' => "\n"];
+        }
+        if ($share['text'] !== '') {
+            $ops[] = ['insert' => $share['text'] . "\n"];
+        }
+        if ($share['image'] !== null) {
+            $ops[] = ['insert' => ['image' => $share['image']]];
+            $ops[] = ['insert' => "\n"];
+        }
+        $this->validateOps($ops);
+        $confirmed[$key] = $expiresAt;
+        $this->repository->saveWishlist($this->directory, $identity, ['ops' => $ops, 'confirmedShares' => $confirmed]);
+        return ['revision' => $this->revision($ops), 'alreadyConfirmed' => false];
+    }
+
+    /** @return array{revision:string,alreadyConfirmed:bool}|null */
+    public function confirmedShare(string $login, string $id, int $now): ?array
+    {
+        $identity = Identity::normalize($this->participant($login));
+        $document = $this->document($identity);
+        $confirmed = $this->activeConfirmations($document['confirmedShares'], $now);
+        return isset($confirmed[hash('sha256', $id)])
+            ? ['revision' => $this->revision($document['ops']), 'alreadyConfirmed' => true]
+            : null;
     }
 
     /** @return array<string,mixed> */
@@ -169,16 +218,31 @@ final class WishlistService
         ];
     }
 
-    /** @return array{ops:array} */
+    /** @return array{ops:array,confirmedShares:array<string,int>} */
     private function document(string $identity): array
     {
         $document = $this->repository->loadWishlist($this->directory, $identity);
         if ($document === null) {
-            return ['ops' => [['insert' => "\n"]]];
+            return ['ops' => [['insert' => "\n"]], 'confirmedShares' => []];
         }
         $ops = $document['ops'] ?? null;
         $this->validateOps($ops);
-        return ['ops' => $ops];
+        $confirmed = $document['confirmedShares'] ?? [];
+        if (!is_array($confirmed)) {
+            throw new ApiException(500, 'invalid_wishlist', 'Invalid share confirmations');
+        }
+        foreach ($confirmed as $key => $expiresAt) {
+            if (!is_string($key) || preg_match('/^[a-f0-9]{64}$/D', $key) !== 1 || !is_int($expiresAt)) {
+                throw new ApiException(500, 'invalid_wishlist', 'Invalid share confirmations');
+            }
+        }
+        return ['ops' => $ops, 'confirmedShares' => $confirmed];
+    }
+
+    /** @param array<string,int> $confirmed @return array<string,int> */
+    private function activeConfirmations(array $confirmed, int $now): array
+    {
+        return array_filter($confirmed, static fn (int $expiresAt): bool => $expiresAt > $now);
     }
 
     private function revision(array $ops): string

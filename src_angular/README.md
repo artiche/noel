@@ -7,7 +7,7 @@ Application Angular 22 et Angular Material pour consulter les tirages de l'API P
 Node.js compatible avec Angular 22 (`^22.22.3`, `^24.15.0` ou `>=26.0.0`) et PHP 8.2+ sont nécessaires. Depuis la racine du dépôt, démarrer l'API :
 
 ```sh
-php -S 127.0.0.1:8080 -t src_php/public src_php/public/index.php
+php -d enable_post_data_reading=0 -S 127.0.0.1:8080 -t src_php/public src_php/public/index.php
 ```
 
 Configurez auparavant `src_php/data/config.local.php` avec un `jwt_secret`
@@ -28,6 +28,79 @@ L'API locale doit être démarrée avec `base_path` vide dans sa configuration. 
 ## Production
 
 L'interface et l'API doivent partager la même origine HTTPS. L'URL d'API est `api/` relative au `base href` de l'application. Par exemple, pour héberger l'application sous `/noel/` et l'API sous `/noel/api`, construire avec `npm run build -- --base-href /noel/`, servir les fichiers de `dist/noel/browser/` à cet emplacement et configurer `base_path` à `/noel/api` pour PHP. Le serveur doit acheminer les requêtes API vers PHP avant de rediriger les routes Angular inconnues vers `index.html`. Adapter le `base href`, le chemin de l'API et le proxy de développement si nécessaire.
+
+La version de production inclut un manifest et un service worker Angular : elle
+peut être installée depuis un navigateur compatible. Le service worker met en
+cache les ressources de l'interface, pas les réponses de l'API ni les wishlists ;
+une connexion reste nécessaire pour consulter ou modifier les données. Le
+service worker n'est pas activé en développement. La réception depuis les menus
+de partage Android dépend du support Web Share Target du navigateur installé ;
+la réception iOS nécessite le Raccourci décrit ci-dessous.
+
+Le menu utilisateur donne accès à **Clés de partage** : un participant peut
+créer jusqu'à dix clés pour le Raccourci iOS, dont le secret n'est affiché
+qu'une fois, et les révoquer. Les clés permettent uniquement de créer des
+brouillons, à confirmer dans l'écran de partage. Un changement
+ou une réinitialisation de mot de passe révoque toutes les clés : il faut alors
+en créer une nouvelle et actualiser le Raccourci. Les anciens participants
+peuvent toujours consulter et révoquer leurs clés.
+
+### Partager vers la wishlist
+
+Sur Android, installer l'application depuis un navigateur compatible, puis
+la choisir dans le menu de partage pour envoyer une URL, du texte ou une
+image PNG, JPEG, GIF ou WebP. Sur iOS, installer la PWA via Safari si souhaité ;
+iOS ne propose pas Web Share Target pour les PWA, et le partage passe donc par
+un Raccourci Apple :
+
+1. Dans **Clés de partage**, créer une clé et la copier immédiatement. La
+   conserver de façon privée : toute personne qui la possède peut créer des
+   brouillons pour ce compte. Ne pas partager le Raccourci contenant la clé.
+2. Dans Raccourcis, créer un raccourci et activer **Afficher dans la feuille
+   de partage** ; accepter les URL, textes et images. Les intitulés des actions
+   peuvent varier selon la version d'iOS.
+3. Selon le type de l'entrée du raccourci, préparer un champ texte `url` pour
+   une URL ou `text` pour un texte. Pour une image, préparer un seul fichier
+   `image` PNG, JPEG, GIF ou WebP. Les champs absents peuvent être omis ; un
+   texte peut aussi contenir une URL. En cas de sélection multiple, demander à
+   l'utilisateur de choisir une image plutôt que d'en perdre silencieusement.
+4. Ajouter **Obtenir le contenu de l'URL** : URL
+   `https://example.com/noel/api/wish` adaptée à l'installation, méthode
+   `POST`, en-tête `Authorization` valant `Bearer ` suivi de la clé, corps de
+   type formulaire avec les champs préparés. Le client doit envoyer
+   `multipart/form-data` avec une frontière générée automatiquement ; ne pas
+   fixer manuellement l'en-tête `Content-Type`. Ne jamais mettre la clé dans
+   l'URL. Pour éviter son enregistrement dans le Raccourci, la demander à
+   chaque exécution ; sinon protéger l'accès au raccourci et à ses sauvegardes.
+5. Traiter la réponse comme un dictionnaire : obtenir successivement la valeur
+   de `data`, puis celle de `confirmationUrl`, et utiliser **Ouvrir les URL**.
+   Si la requête échoue ou si la réponse ne contient pas cette URL, afficher
+   une erreur et ne pas annoncer un succès. Tester le formulaire sur l'appareil :
+   la disponibilité des types de fichiers et le format envoyé peuvent varier
+   selon iOS. Le contrat exact figure dans le README PHP.
+
+Le Raccourci crée seulement un brouillon ; l'ouverture peut avoir lieu dans
+Safari plutôt que dans la PWA installée. Les sessions et stockages peuvent être
+distincts : se connecter si nécessaire avec le compte propriétaire de la clé.
+Le premier compte participant ouvrant un partage Android en devient
+propriétaire. Dans `/partage`, vérifier ou modifier les champs, ajouter un
+commentaire et confirmer ou annuler. L'image peut être conservée ou retirée.
+Le texte partagé et le commentaire sont ajoutés ensemble en texte brut. Un
+conflit de wishlist impose une revue avant une nouvelle confirmation.
+
+Une connexion est indispensable : les brouillons restent sur le serveur et
+expirent après sept jours. Le lien secret et les modifications textuelles sont
+conservés temporairement dans le stockage de l'onglet pour permettre la
+reconnexion ; l'image n'y est pas copiée. Ne pas fermer cet onglet avant la
+confirmation, et ne pas communiquer le lien. Les partages multiples restent
+distincts dans cet onglet. Si le stockage échoue, l'interface bloque la
+reconnexion automatique et demande de réessayer.
+
+Lorsqu'une URL est partagée sans titre, le serveur tente après authentification
+de suggérer le titre OpenGraph ou, à défaut, le titre HTML. La source est
+indiquée et le titre reste modifiable ; aucune image distante n'est importée.
+L'URL est alors contactée par le serveur. L'utilisateur peut continuer sans
+attendre et saisir un titre si la récupération échoue ou est désactivée.
 
 La déconnexion expire le cookie du navigateur ; elle ne révoque pas un jeton copié. Voir la documentation de `../src_php/README.md` pour le fonctionnement et la configuration de l'API.
 
@@ -63,6 +136,8 @@ environnement. On peut protéger `prod` par une validation GitHub.
 | `SMTP_PORT` | Port SMTP, par exemple `465`. |
 | `SMTP_FROM_EMAIL` | Adresse d'expédition autorisée par le serveur SMTP. |
 | `SMTP_FROM_NAME` | Nom d'expéditeur, par exemple `Noel API`. |
+| `SHARE_METADATA_ENABLED` | Facultatif : `false` pour désactiver les suggestions de titre ; défaut `true`. |
+| `SHARE_METADATA_DNS_PHP` | Facultatif : `php` ou chemin absolu simple du binaire PHP CLI sur IONOS ; défaut `php`. |
 
 Les paramètres JWT et SMTP sont requis pour déployer l'API ; un déploiement
 du seul frontend nécessite seulement les paramètres SFTP et `SITE_URL`.
@@ -74,7 +149,9 @@ l'empreinte de la clé SSH auprès d'IONOS par un canal fiable avant d'ajouter l
 ligne `known_hosts` ; ne pas accepter automatiquement une clé inconnue. Le
 workflow refuse les clés d'hôte inconnues ou modifiées.
 
-Le workflow construit Angular avec Node 24, installe les dépendances Composer
+Le workflow teste l'API et Angular pour les composants sélectionnés, vérifie
+les artefacts PWA construits pour le chemin public, construit Angular avec
+Node 24, installe les dépendances Composer
 de production, puis génère `api/data/config.local.php` sur le runner depuis ces
 valeurs. Il configure automatiquement le chemin `/api`, les liens de mail et
 la redirection vers `/connexion`, y compris pour un sous-dossier. Il ajoute
@@ -156,6 +233,40 @@ La police Playfair Display et les icônes Material sont chargées depuis Google 
 
 ```sh
 npm test -- --watch=false
-npm run build
+npm run build -- --base-href /
+npm run test:pwa -- /
+npm run build -- --base-href /noel/
+npm run test:pwa -- /noel/
 php ../src_php/tests/run.php
+php ../.github/scripts/test-prepare-deploy.php
 ```
+
+Les tests PHP HTTP nécessitent l'extension cURL, `proc_open`, les liens
+symboliques et un port loopback disponible ; ils utilisent des données
+temporaires isolées. Les builds et tests locaux ne remplacent pas les essais
+suivants sur appareils et hébergement réels :
+
+- **Déploiement :** avant mise en production, sauvegarder et tester la
+  restauration des données et de la configuration privées ; vérifier HTTPS,
+  les accès directs à `/connexion`, `/partage` et `/api/health`, ainsi que le
+  refus d'accès HTTP à `api/data/`. Répéter pour chaque chemin public utilisé,
+  à la racine ou en sous-dossier.
+- **IONOS :** vérifier l'application de `.user.ini` et de
+  `enable_post_data_reading=0`, la transmission de `Authorization`, l'état
+  HTTPS transmis à PHP, les limites d'upload et la mémoire. Programmer et
+  surveiller le nettoyage des brouillons ; vérifier expiration après sept jours
+  et suppression physique. Tester la disponibilité des métadonnées ou leur
+  désactivation explicite ; voir le README PHP.
+- **Android :** installer depuis Chrome compatible, puis partager une URL
+  présente dans le texte, une image seule et un partage mixte. Vérifier la
+  redirection, la reconnexion après expiration de session, les champs,
+  l'annulation, la confirmation et l'absence de doublon après une nouvelle
+  tentative. Sans réseau, vérifier qu'une erreur est affichée.
+- **iOS :** essayer depuis Safari et Raccourcis les partages URL et image ;
+  vérifier l'en-tête Bearer et la réponse, la reconnexion éventuelle, le refus
+  avec un autre compte et la confirmation avec le compte propriétaire. La PWA
+  installée et Safari peuvent avoir des sessions distinctes.
+- **Cache et mises à jour :** contrôler que sessions, brouillons et wishlists
+  ne sont pas servis depuis un cache privé ou le service worker ; déployer une
+  nouvelle version et vérifier la notification et la mise à jour sans perte
+  de modifications en cours. Tester aussi le passage réseau du POST Android.

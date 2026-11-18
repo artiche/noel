@@ -59,6 +59,20 @@ try {
             'smtp_from_email' => requiredEnv('SMTP_FROM_EMAIL'),
             'smtp_from_name' => requiredEnv('SMTP_FROM_NAME'),
         ];
+        $metadataEnabled = getenv('SHARE_METADATA_ENABLED');
+        if ($metadataEnabled !== false && $metadataEnabled !== '') {
+            if (!in_array($metadataEnabled, ['true', 'false'], true)) {
+                throw new RuntimeException('SHARE_METADATA_ENABLED doit valoir true ou false.');
+            }
+            $config['share_metadata_enabled'] = $metadataEnabled === 'true';
+        }
+        $metadataPhp = getenv('SHARE_METADATA_DNS_PHP');
+        if ($metadataPhp !== false && $metadataPhp !== '') {
+            if ($metadataPhp !== 'php' && preg_match('#^/(?:[a-zA-Z0-9_-][a-zA-Z0-9_.-]*/)*[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$#D', $metadataPhp) !== 1) {
+                throw new RuntimeException('SHARE_METADATA_DNS_PHP doit valoir php ou un chemin absolu simple.');
+            }
+            $config['share_metadata_dns_php'] = $metadataPhp;
+        }
         if (filter_var($config['smtp_from_email'], FILTER_VALIDATE_EMAIL) === false) {
             throw new RuntimeException('SMTP_FROM_EMAIL doit être une adresse email valide.');
         }

@@ -1,10 +1,11 @@
 import { DOCUMENT } from '@angular/common';
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpContextToken, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { catchError, map, Observable, of, throwError } from 'rxjs';
 import type { Op } from 'quill';
 
 export const FIRST_YEAR = 2021;
+export const BACKGROUND_SESSION_REQUEST = new HttpContextToken(() => false);
 
 export interface DrawAssignment {
   giver: string;
@@ -61,6 +62,31 @@ export interface RecipientWishlist {
   ops: Op[];
 }
 
+export interface ShareToken {
+  id: string;
+  createdAt: number | null;
+}
+
+export interface SharedDraft {
+  title: string;
+  url: string;
+  text: string;
+  image: string | null;
+  source: 'android' | 'ios';
+  expiresAt: number;
+}
+
+export interface SharedContent {
+  title: string;
+  url: string;
+  text: string;
+  keepImage: boolean;
+}
+
+export type ShareMetadata =
+  | { status: 'found'; title: string; source: 'opengraph' | 'html' }
+  | { status: 'none' | 'unavailable' | 'not_needed'; title: null; source: null };
+
 export class InvalidNotificationResponseError extends Error {}
 
 interface ApiResponse<T> {
@@ -109,6 +135,108 @@ export class Api {
       `${this.base}account`, { currentPassword, ...(email === undefined ? {} : { email }),
         ...(newPassword === undefined ? {} : { newPassword }) }, { withCredentials: true },
     ).pipe(map(() => undefined));
+  }
+
+  shareTokens(): Observable<ShareToken[]> {
+    return this.http.get<ApiResponse<{ tokens: unknown }>>(`${this.base}share-tokens`, { withCredentials: true })
+      .pipe(map((response) => {
+        const tokens = response.data?.tokens;
+        if (!Array.isArray(tokens) || !tokens.every((token: unknown): token is ShareToken =>
+          token !== null && typeof token === 'object' && 'id' in token && typeof token.id === 'string' &&
+          /^[a-f0-9]{32}$/.test(token.id) && 'createdAt' in token &&
+          (token.createdAt === null || (typeof token.createdAt === 'number' &&
+            Number.isSafeInteger(token.createdAt) && token.createdAt >= 0 && token.createdAt <= 8_640_000_000_000))) ||
+          new Set(tokens.map((token) => token.id)).size !== tokens.length) {
+          throw new Error('Invalid share token list');
+        }
+        return tokens;
+      }));
+  }
+
+  createShareToken(): Observable<{ id: string; token: string }> {
+    return this.http.post<ApiResponse<{ id: unknown; token: unknown }>>(
+      `${this.base}share-tokens`, {}, { withCredentials: true },
+    ).pipe(map((response) => {
+      const data = response.data;
+      if (!data || typeof data.id !== 'string' || !/^[a-f0-9]{32}$/.test(data.id) ||
+          typeof data.token !== 'string' || !/^[a-f0-9]{64}$/.test(data.token)) {
+        throw new Error('Invalid share token creation response');
+      }
+      return { id: data.id, token: data.token };
+    }));
+  }
+
+  revokeShareToken(id: string): Observable<void> {
+    return this.http.post<ApiResponse<{ revoked: boolean }>>(
+      `${this.base}share-tokens/revoke`, { id }, { withCredentials: true },
+    ).pipe(map((response) => {
+      if (response.data?.revoked !== true) throw new Error('Invalid share token revocation response');
+    }));
+  }
+
+  openSharedDraft(draftId: string): Observable<SharedDraft> {
+    return this.http.post<ApiResponse<SharedDraft>>(
+      `${this.base}share-drafts/open`, { draftId }, { withCredentials: true },
+    ).pipe(map((response) => {
+      const data = response.data;
+      if (!data || typeof data.title !== 'string' || typeof data.url !== 'string' || typeof data.text !== 'string' ||
+          (data.image !== null && (typeof data.image !== 'string' || data.image.length > 6_666_800 ||
+            !/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(data.image))) ||
+          (data.source !== 'android' && data.source !== 'ios') ||
+          !Number.isSafeInteger(data.expiresAt) || data.expiresAt < 0 || data.expiresAt > 8_640_000_000) {
+        throw new Error('Invalid shared draft response');
+      }
+      return data;
+    }));
+  }
+
+  sharedDraftMetadata(draftId: string): Observable<ShareMetadata> {
+    return this.http.post<ApiResponse<ShareMetadata>>(
+      `${this.base}share-drafts/metadata`, { draftId },
+      { withCredentials: true, context: new HttpContext().set(BACKGROUND_SESSION_REQUEST, true) },
+    ).pipe(map((response) => {
+      const data = response.data;
+      if (!data || !(
+        (data.status === 'found' && typeof data.title === 'string' && data.title.trim() !== '' &&
+          new TextEncoder().encode(data.title).length <= 4096 &&
+          (data.source === 'opengraph' || data.source === 'html')) ||
+        ((data.status === 'none' || data.status === 'unavailable' || data.status === 'not_needed') &&
+          data.title === null && data.source === null)
+      )) {
+        throw new Error('Invalid share metadata response');
+      }
+      return data;
+    }));
+  }
+
+  confirmSharedDraft(draftId: string, revision: string, content: SharedContent): Observable<{ alreadyConfirmed: boolean }> {
+    return this.http.post<ApiResponse<{ revision: string; alreadyConfirmed: boolean }>>(
+      `${this.base}share-drafts/confirm`, { draftId, revision, ...content }, { withCredentials: true },
+    ).pipe(map((response) => {
+      const data = response.data;
+      if (!data || typeof data.revision !== 'string' || !/^[a-f0-9]{64}$/.test(data.revision) ||
+          typeof data.alreadyConfirmed !== 'boolean') {
+        throw new Error('Invalid share confirmation response');
+      }
+      return { alreadyConfirmed: data.alreadyConfirmed };
+    }));
+  }
+
+  cancelSharedDraft(draftId: string): Observable<void> {
+    return this.http.post<ApiResponse<{ cancelled: boolean }>>(
+      `${this.base}share-drafts/cancel`, { draftId }, { withCredentials: true },
+    ).pipe(map((response) => {
+      if (response.data?.cancelled !== true) throw new Error('Invalid share cancellation response');
+    }));
+  }
+
+  sharedDraftStatus(draftId: string): Observable<boolean> {
+    return this.http.post<ApiResponse<{ confirmed: boolean }>>(
+      `${this.base}share-drafts/status`, { draftId }, { withCredentials: true },
+    ).pipe(map((response) => {
+      if (typeof response.data?.confirmed !== 'boolean') throw new Error('Invalid share status response');
+      return response.data.confirmed;
+    }));
   }
 
   adminData(): Observable<AdminData> {

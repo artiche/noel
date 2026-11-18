@@ -50,7 +50,9 @@ export class Login {
     ).subscribe({
       next: () => {
         this.form.controls.password.reset();
-        if (this.route.snapshot.queryParamMap.get('returnWishlist') === '1') {
+        if (this.route.snapshot.queryParamMap.get('returnShare') === '1') {
+          void this.router.navigate(['/partage']);
+        } else if (this.route.snapshot.queryParamMap.get('returnWishlist') === '1') {
           const target = this.route.snapshot.queryParamMap.get('target');
           void this.router.navigate(['/wishlist'], { queryParams: target === null ? {} : { target } });
         } else {

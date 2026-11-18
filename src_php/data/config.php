@@ -17,6 +17,11 @@ return [
     'users_file_path' => 'data/users.json',
     'password_resets_file_path' => 'data/passwordResets.json',
     'wishlist_directory' => 'data/wishlists',
+    'share_draft_directory' => 'data/share-drafts',
+    'share_tokens_file_path' => 'data/share-tokens.json',
+    'share_allow_insecure_local' => false,
+    'share_metadata_enabled' => true,
+    'share_metadata_dns_php' => 'php',
 
     'smtp_host' => 'smtp.example.com',
     'smtp_port' => 25,

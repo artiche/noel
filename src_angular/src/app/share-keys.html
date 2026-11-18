@@ -1,0 +1,76 @@
+<mat-toolbar>
+  <span>Clés de partage</span>
+  <span class="spacer"></span>
+  <a mat-button routerLink="/tirages">Retour aux tirages</a>
+</mat-toolbar>
+
+<main>
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      <h1>Clés pour le Raccourci iOS</h1>
+      <p>Une clé permet uniquement de créer des brouillons de partage. Elle ne donne pas accès à votre wishlist.</p>
+      <p>Un changement ou une réinitialisation de mot de passe révoque toutes vos clés.</p>
+      @if (loading()) { <p role="status">Chargement des clés…</p> }
+      @if (listError()) {
+        <p class="error" role="alert">{{ listError() }}</p>
+        <button mat-button type="button" [disabled]="loading() || busy()" (click)="refresh()">Actualiser la liste</button>
+      }
+      @if (error()) { <p class="error" role="alert">{{ error() }}</p> }
+      @if (message()) { <p role="status">{{ message() }}</p> }
+      @if (user() && !user()?.participant) {
+        <p>Seuls les comptes associés à un participant peuvent créer une clé. Vous pouvez toutefois révoquer vos clés existantes.</p>
+      }
+      @if (newKey(); as key) {
+        <section class="new-key" aria-labelledby="new-key-title">
+          <h2 id="new-key-title">Clé créée</h2>
+          <p>Copiez cette clé dans l’en-tête Authorization de votre Raccourci, après <code>Bearer</code> et un espace. Elle ne sera plus affichée ensuite.</p>
+          <label for="share-secret">Clé secrète</label>
+          <textarea id="share-secret" readonly rows="3" [value]="key.token" spellcheck="false"></textarea>
+          <p>Identifiant : <code>{{ key.id }}</code></p>
+          <button mat-flat-button type="button" (click)="newKey.set(null)">J’ai enregistré ma clé</button>
+        </section>
+      }
+      <div class="actions">
+        <button mat-flat-button type="button" [disabled]="loading() || busy() || !!listError() || !!newKey() || !user()?.participant"
+          (click)="create()">Créer une clé</button>
+        @if (!listError()) {
+          <button mat-button type="button" [disabled]="loading() || busy()" (click)="refresh()">Actualiser la liste</button>
+        }
+      </div>
+      @if (!loading() && !listError() && tokens().length === 0) { <p>Aucune clé active.</p> }
+      @for (token of tokens(); track token.id) {
+        <div class="entry">
+          <div>
+            <strong>Identifiant :</strong> <code>{{ token.id }}</code>
+            @if (token.createdAt !== null) {
+              <div>Créée le {{ token.createdAt * 1000 | date:'dd/MM/yyyy à HH:mm' }}</div>
+            } @else {
+              <div>Date de création inconnue</div>
+            }
+          </div>
+          @if (confirmingId() === token.id) {
+            <div class="actions">
+              <span>Révoquer cette clé ?</span>
+              <button mat-button type="button" [disabled]="busy()" (click)="revoke(token.id)">Confirmer</button>
+              <button mat-button type="button" [disabled]="busy()" (click)="confirmingId.set(null)">Annuler</button>
+            </div>
+          } @else {
+            <button mat-button type="button" [disabled]="loading() || busy() || !!listError() || !!newKey()"
+              (click)="confirmingId.set(token.id)">Révoquer</button>
+          }
+        </div>
+      }
+    </mat-card-content>
+  </mat-card>
+</main>
+
+<ng-template #leaveTemplate>
+  <div class="leave-dialog">
+    <h2>Clé non enregistrée</h2>
+    <p>Cette clé ne sera plus affichée. Quitter sans l’enregistrer ?</p>
+    <div class="actions">
+      <button mat-button type="button" [mat-dialog-close]="false">Rester</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="true">Quitter</button>
+    </div>
+  </div>
+</ng-template>
