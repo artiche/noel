@@ -251,7 +251,7 @@ suivants sur appareils et hébergement réels :
   les accès directs à `/connexion`, `/partage` et `/api/health`, ainsi que le
   refus d'accès HTTP à `api/data/`. Répéter pour chaque chemin public utilisé,
   à la racine ou en sous-dossier.
-- **IONOS :** vérifier l'application de `.user.ini` et de
+- **IONOS :** vérifier l'application de `public/php.ini` et de
   `enable_post_data_reading=0`, la transmission de `Authorization`, l'état
   HTTPS transmis à PHP, les limites d'upload et la mémoire. Programmer et
   surveiller le nettoyage des brouillons ; vérifier expiration après sept jours

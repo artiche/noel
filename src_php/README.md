@@ -279,8 +279,10 @@ Tester la restauration des sauvegardes privees de `data/` et de la
 configuration : aucune sauvegarde n'est realisee automatiquement.
 
 La lecture multipart impose `enable_post_data_reading=0` avant l'execution de
-PHP : `public/.user.ini` le demande sur PHP CGI/FPM. Verifier que l'hebergement
-honore ce fichier ; sinon configurer cette directive au niveau serveur. Les
+PHP : `public/php.ini` le demande. Un `.user.ini` ne convient pas sur IONOS, ou
+il est applique trop tard (le corps arrive vide : `Incomplete multipart body
+(expected=N received=0)`). Verifier que l'hebergement honore ce fichier ; sinon
+configurer cette directive au niveau serveur. Les
 routes de partage repondent explicitement `503 share_multipart_unavailable`
 si elle n'est pas appliquee. Le serveur PHP de developpement necessite le
 parametre `-d` ci-dessus. Les autres endpoints JSON restent inchanges.
@@ -297,7 +299,7 @@ l'etat HTTPS.
 JSON de partage et les limites wishlist existantes. La validation est effectuee
 sur les octets reels, sans utiliser `upload_max_filesize` ni le MIME annonce.
 Une limite inferieure de l'hebergement peut empecher le transfert avant PHP.
-Avant mise en service, verifier sur l'hebergement reel que `.user.ini` est
+Avant mise en service, verifier sur l'hebergement reel que `php.ini` est
 effectivement applique, que `Authorization` arrive a PHP, que le statut HTTPS
 est correct et que la tache planifiee fonctionne. Tester le Raccourci et le
 partage Android sur appareils reels ; les tests locaux ne prouvent pas leur
